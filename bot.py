@@ -106,20 +106,6 @@ def save_memory(user_id, history):
     db.commit()
 
 
-def clear_memory(user_id):
-
-    history = [
-        {"role": "system", "content": "Ты дружелюбный умный AI помощник."}
-    ]
-
-    cursor.execute(
-        "UPDATE memory SET history=? WHERE user_id=?",
-        (json.dumps(history), user_id)
-    )
-
-    db.commit()
-
-
 # GPT функция
 def ask_gpt(user_id, text):
 
@@ -209,8 +195,8 @@ def main_menu():
 
     kb.row("🥷 Убийца фотошопа", "🧠 Твой умный собеседник")
     kb.row("🎥 Видео будущего", "🔉 Аудио с ИИ")
-    kb.row("👤 Профиль", "💰 Купить токены")
-    kb.row("❓ Помощь")
+    kb.row("👤 Профиль", "❓ Помощь")
+    kb.row("💰 Купить токены")
 
     return kb
 
@@ -220,7 +206,7 @@ def back():
 
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    kb.row("⬅️ Назад", "🧹 Очистить диалог")
+    kb.row("⬅️ Назад")
 
     return kb
 
@@ -242,7 +228,7 @@ def start(message):
 
     send(
         message.chat.id,
-        "⚡ Добро пожаловать в Magic AI",
+        "✨ Добро пожаловать в Magic AI\n\nВыберите нужную функцию:",
         main_menu()
     )
 
@@ -265,7 +251,7 @@ def callback(call):
 
         bot.send_message(
             call.message.chat.id,
-            "⭐ Оплата прошла. Вам начислено 50 токенов."
+            "⭐ Вам начислено 50 токенов."
         )
 
     if call.data == "buy_150":
@@ -281,7 +267,7 @@ def callback(call):
 
         bot.send_message(
             call.message.chat.id,
-            "⭐ Оплата прошла. Вам начислено 150 токенов."
+            "⭐ Вам начислено 150 токенов."
         )
 
 
@@ -292,6 +278,7 @@ def handler(message):
     user = message.from_user.id
     mode = user_modes.get(user)
 
+    # эффект Таноса (НЕ удаляем сообщения в режимах работы)
     if mode not in ["chat", "image", "audio", "video"]:
         try:
             bot.delete_message(message.chat.id, message.message_id)
@@ -307,17 +294,6 @@ def handler(message):
             message.chat.id,
             "🏠 Главное меню",
             main_menu()
-        )
-        return
-
-
-    if text == "🧹 Очистить диалог":
-
-        clear_memory(user)
-
-        bot.send_message(
-            message.chat.id,
-            "🧠 Память диалога очищена."
         )
         return
 
@@ -342,7 +318,7 @@ def handler(message):
 
         bot.send_message(
             message.chat.id,
-            "Выберите пакет токенов:",
+            "💳 Выберите пакет токенов:",
             reply_markup=kb
         )
         return
@@ -358,20 +334,24 @@ def handler(message):
         tokens, requests_count = cursor.fetchone()
 
         text_profile = f"""
-👤 Профиль
+👤 Ваш профиль
+
+━━━━━━━━━━━━━━━
 
 🆔 ID: {user}
-🪙 Токены: {tokens}
-📊 Запросов: {requests_count}
+
+🪙 Баланс токенов: {tokens}
+
+📊 Использовано запросов: {requests_count}
+
+━━━━━━━━━━━━━━━
 
 🔗 Ваша реферальная ссылка
+
 https://t.me/AiMagicCreateBot?start={user}
 
-💰 Хочешь заработать?
-
-Отправь эту ссылку друзьям.
-За каждого приглашённого друга
-ты получишь 15 токенов.
+💸 Приглашайте друзей и получайте
++15 токенов за каждого нового пользователя.
 """
 
         send(
@@ -390,13 +370,10 @@ https://t.me/AiMagicCreateBot?start={user}
             message.chat.id,
             """🥷 Убийца фотошопа
 
-🎨 Привет!
-
-Напиши описание изображения
-или отправь фото и напиши
+Отправьте фото и напишите
 что нужно изменить.
 
-⏳ ИИ готов к генерации...""",
+ИИ обработает изображение.""",
             back()
         )
         return
@@ -408,15 +385,10 @@ https://t.me/AiMagicCreateBot?start={user}
 
         send(
             message.chat.id,
-            """🤖 Привет!
+            """🤖 Умный собеседник
 
-Я твой умный собеседник.
-
-Можешь задать любой вопрос,
-попросить совет или просто
-поговорить со мной.
-
-🧠 Я готов к диалогу.""",
+Задайте любой вопрос
+и получите ответ от AI.""",
             back()
         )
         return
@@ -428,12 +400,10 @@ https://t.me/AiMagicCreateBot?start={user}
 
         send(
             message.chat.id,
-            """🎥 Видео будущего
+            """🎥 Генерация видео
 
-🚀 Скоро здесь появится
-генерация AI видео.
-
-Следи за обновлениями!""",
+Скоро здесь появится
+создание AI видео.""",
             back()
         )
         return
@@ -445,10 +415,9 @@ https://t.me/AiMagicCreateBot?start={user}
 
         send(
             message.chat.id,
-            """🔉 Аудио с ИИ
+            """🔉 Генерация аудио
 
-🎧 Генерация аудио скоро
-появится в этом разделе.""",
+Функция скоро появится.""",
             back()
         )
         return
@@ -461,19 +430,42 @@ https://t.me/AiMagicCreateBot?start={user}
             """❓ Помощь
 
 Если возникли вопросы —
-обратитесь в поддержку.""",
+напишите в поддержку.""",
             back()
         )
         return
 
 
+    # ChatGPT режим с красивой анимацией
     if mode == "chat":
+
+        msg = bot.send_message(
+            message.chat.id,
+            "⚡ Запрос получен..."
+        )
+
+        time.sleep(0.7)
+
+        bot.edit_message_text(
+            "🧠 Анализирую данные...",
+            message.chat.id,
+            msg.message_id
+        )
+
+        time.sleep(0.7)
+
+        bot.edit_message_text(
+            "🤖 Генерирую ответ...",
+            message.chat.id,
+            msg.message_id
+        )
 
         answer = ask_gpt(user, text)
 
-        bot.send_message(
+        bot.edit_message_text(
+            f"✨ {answer}",
             message.chat.id,
-            answer
+            msg.message_id
         )
 
         return
