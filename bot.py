@@ -7,7 +7,7 @@ import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-FLUX_API_KEY = os.getenv("FLUX_API_KEY")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -175,101 +175,107 @@ def ask_gpt(user_id, text):
     return answer
 
 
-# генерация изображения по тексту
+# генерация изображения по тексту через Replicate FLUX schnell
 def generate_flux(prompt):
 
-    url = "https://api.bfl.ai/v1/flux-2-pro"
+    url = "https://api.replicate.com/v1/predictions"
 
     headers = {
-        "x-key": FLUX_API_KEY,
+        "Authorization": "Token " + REPLICATE_API_TOKEN,
         "Content-Type": "application/json"
     }
 
     data = {
-        "prompt": prompt,
-        "aspect_ratio": "1:1"
+        "version": "c846a69991daf4c0e5d016514849d14ee5b2e6846ce6b9d6f21369e564cfe51e",
+        "input": {
+            "prompt": prompt,
+            "aspect_ratio": "1:1",
+            "num_outputs": 1,
+            "num_inference_steps": 4
+        }
     }
 
     r = requests.post(url, headers=headers, json=data, timeout=120)
-    result = r.json()
+    prediction = r.json()
 
-    if "id" in result:
-        request_id = result["id"]
-    elif "request_id" in result:
-        request_id = result["request_id"]
-    else:
+    if "id" not in prediction:
         return None
+
+    prediction_id = prediction["id"]
 
     while True:
 
-        poll = requests.get(
-            f"https://api.bfl.ai/v1/get_result?id={request_id}",
-            headers={"x-key": FLUX_API_KEY},
+        time.sleep(1)
+
+        r = requests.get(
+            f"https://api.replicate.com/v1/predictions/{prediction_id}",
+            headers=headers,
             timeout=120
         )
 
-        poll_result = poll.json()
+        result = r.json()
+        status = result.get("status")
 
-        status = poll_result.get("status")
-
-        if status in ["Ready", "ready", "succeeded", "SUCCESS"]:
-            if "result" in poll_result and isinstance(poll_result["result"], dict):
-                return poll_result["result"].get("sample") or poll_result["result"].get("image_url")
-            return poll_result.get("sample") or poll_result.get("image_url")
-
-        if status in ["Error", "error", "failed", "FAILURE"]:
+        if status == "succeeded":
+            output = result.get("output")
+            if isinstance(output, list) and len(output) > 0:
+                return output[0]
             return None
 
-        time.sleep(2)
+        if status == "failed" or status == "canceled":
+            return None
 
 
-# редактирование изображения
+# редактирование изображения через Replicate FLUX dev (image-to-image)
 def edit_image(image_url, prompt):
 
-    url = "https://api.bfl.ai/v1/flux-2-pro"
+    url = "https://api.replicate.com/v1/predictions"
 
     headers = {
-        "x-key": FLUX_API_KEY,
+        "Authorization": "Token " + REPLICATE_API_TOKEN,
         "Content-Type": "application/json"
     }
 
     data = {
-        "prompt": prompt,
-        "input_image": image_url,
-        "aspect_ratio": "1:1"
+        "version": "93d72f81bd019dde2bfcba9585a6f74e600b13a43a96eb01a42da54f5ab4df6a",
+        "input": {
+            "prompt": prompt,
+            "image": image_url,
+            "prompt_strength": 0.8,
+            "num_outputs": 1,
+            "aspect_ratio": "1:1"
+        }
     }
 
     r = requests.post(url, headers=headers, json=data, timeout=120)
-    result = r.json()
+    prediction = r.json()
 
-    if "id" in result:
-        request_id = result["id"]
-    elif "request_id" in result:
-        request_id = result["request_id"]
-    else:
+    if "id" not in prediction:
         return None
+
+    prediction_id = prediction["id"]
 
     while True:
 
-        poll = requests.get(
-            f"https://api.bfl.ai/v1/get_result?id={request_id}",
-            headers={"x-key": FLUX_API_KEY},
+        time.sleep(1)
+
+        r = requests.get(
+            f"https://api.replicate.com/v1/predictions/{prediction_id}",
+            headers=headers,
             timeout=120
         )
 
-        poll_result = poll.json()
+        result = r.json()
+        status = result.get("status")
 
-        status = poll_result.get("status")
-
-        if status in ["Ready", "ready", "succeeded", "SUCCESS"]:
-            if "result" in poll_result and isinstance(poll_result["result"], dict):
-                return poll_result["result"].get("sample") or poll_result["result"].get("image_url")
-            return poll_result.get("sample") or poll_result.get("image_url")
-
-        if status in ["Error", "error", "failed", "FAILURE"]:
+        if status == "succeeded":
+            output = result.get("output")
+            if isinstance(output, list) and len(output) > 0:
+                return output[0]
             return None
 
-        time.sleep(2)
+        if status == "failed" or status == "canceled":
+            return None
 
 
 # удаление старого сообщения
