@@ -2,13 +2,16 @@ import telebot
 import sqlite3
 import os
 import time
+import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 user_modes = {}
 last_messages = {}
+user_memory = {}
 
 # база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
@@ -60,6 +63,48 @@ def register_user(user, ref=None):
     )
 
     db.commit()
+
+
+# GPT функция с памятью
+def ask_gpt(user_id, text):
+
+    if user_id not in user_memory:
+        user_memory[user_id] = [
+            {"role": "system", "content": "Ты дружелюбный умный AI помощник."}
+        ]
+
+    user_memory[user_id].append({
+        "role": "user",
+        "content": text
+    })
+
+    url = "https://api.openai.com/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": user_memory[user_id],
+        "temperature": 0.7
+    }
+
+    r = requests.post(url, headers=headers, json=data)
+
+    answer = r.json()["choices"][0]["message"]["content"]
+
+    user_memory[user_id].append({
+        "role": "assistant",
+        "content": answer
+    })
+
+    # ограничение памяти
+    if len(user_memory[user_id]) > 20:
+        user_memory[user_id] = user_memory[user_id][-20:]
+
+    return answer
 
 
 # удаление старого сообщения (эффект Таноса)
@@ -281,17 +326,11 @@ https://t.me/AiMagicCreateBot?start={user}
 
     if mode == "chat":
 
-        msg = bot.send_message(
-            message.chat.id,
-            "🧠 ИИ думает..."
-        )
+        answer = ask_gpt(user, text)
 
-        time.sleep(1)
-
-        bot.edit_message_text(
-            "🤖 Пока ИИ не подключён. Скоро добавим.",
+        bot.send_message(
             message.chat.id,
-            msg.message_id
+            answer
         )
 
         return
