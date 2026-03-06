@@ -175,6 +175,48 @@ def ask_gpt(user_id, text):
     return answer
 
 
+# улучшение промпта для генерации
+def improve_prompt(prompt):
+
+    url = "https://api.openai.com/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    system = """Ты профессиональный AI prompt engineer.
+Превращай короткие пользовательские запросы в детализированные промпты
+для генерации фотореалистичных изображений.
+
+Добавляй:
+детали сцены
+освещение
+камеру
+реализм
+киношный стиль
+
+Не объясняй ничего.
+Выводи только улучшенный промпт."""
+
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7
+    }
+
+    r = requests.post(url, headers=headers, json=data, timeout=60)
+    result = r.json()
+
+    if "choices" not in result:
+        return prompt
+
+    return result["choices"][0]["message"]["content"]
+
+
 # генерация изображения по тексту через Replicate FLUX schnell
 def generate_flux(prompt):
 
@@ -191,7 +233,9 @@ def generate_flux(prompt):
             "prompt": prompt,
             "aspect_ratio": "1:1",
             "num_outputs": 1,
-            "num_inference_steps": 4
+            "num_inference_steps": 32,
+            "guidance_scale": 7.5,
+            "prompt_upsampling": True
         }
     }
 
@@ -222,7 +266,7 @@ def generate_flux(prompt):
                 return output[0]
             return None
 
-        if status == "failed" or status == "canceled":
+        if status in ["failed", "canceled"]:
             return None
 
 
@@ -241,8 +285,10 @@ def edit_image(image_url, prompt):
         "input": {
             "prompt": prompt,
             "image": image_url,
-            "prompt_strength": 0.8,
+            "prompt_strength": 0.85,
             "num_outputs": 1,
+            "num_inference_steps": 30,
+            "guidance_scale": 7.5,
             "aspect_ratio": "1:1"
         }
     }
@@ -274,7 +320,7 @@ def edit_image(image_url, prompt):
                 return output[0]
             return None
 
-        if status == "failed" or status == "canceled":
+        if status in ["failed", "canceled"]:
             return None
 
 
@@ -698,7 +744,8 @@ https://t.me/AiMagicCreateBot?start={user}
             "🎨 Генерирую изображение..."
         )
 
-        result = generate_flux(text)
+        better_prompt = improve_prompt(text)
+        result = generate_flux(better_prompt)
 
         if result:
             cursor.execute(
