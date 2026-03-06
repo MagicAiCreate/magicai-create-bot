@@ -7,8 +7,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
 user_modes = {}
+last_messages = {}
 
-# база
+# база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
 cursor = db.cursor()
 
@@ -60,33 +61,51 @@ def register_user(user, ref=None):
     db.commit()
 
 
-# меню
+# удаление старого сообщения
+def clean(chat_id):
+
+    if chat_id in last_messages:
+
+        try:
+            bot.delete_message(chat_id, last_messages[chat_id])
+        except:
+            pass
+
+
+# отправка нового сообщения
+def send(chat_id, text, keyboard=None):
+
+    clean(chat_id)
+
+    msg = bot.send_message(
+        chat_id,
+        text,
+        reply_markup=keyboard
+    )
+
+    last_messages[chat_id] = msg.message_id
+
+
+# главное меню
 def main_menu():
 
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    keyboard.row("👤 Профиль")
-    keyboard.row("🧠 Твой умный собеседник")
-    keyboard.row("🔉 Аудио с ИИ")
-    keyboard.row("🥷 Убийца фотошопа")
-    keyboard.row("🎥 Видео будущего")
-    keyboard.row("⁉️ Помощь")
+    kb.row("🥷 Убийца фотошопа", "🧠 Твой умный собеседник")
+    kb.row("🎥 Видео будущего", "🔉 Аудио с ИИ")
+    kb.row("👤 Профиль", "❓ Помощь")
 
-    return keyboard
+    return kb
 
 
-# профиль меню
-def profile_menu():
+# кнопка назад
+def back():
 
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    keyboard.row("💰 Баланс")
-    keyboard.row("📊 Мои запросы")
-    keyboard.row("👥 Рефералы")
-    keyboard.row("🪙 Купить токены")
-    keyboard.row("🏠 Главное меню")
+    kb.row("⬅️ Назад")
 
-    return keyboard
+    return kb
 
 
 # старт
@@ -98,6 +117,7 @@ def start(message):
     args = message.text.split()
 
     if len(args) > 1:
+
         try:
             ref = int(args[1])
         except:
@@ -105,10 +125,10 @@ def start(message):
 
     register_user(message.from_user, ref)
 
-    bot.send_message(
+    send(
         message.chat.id,
-        "⚡ Добро пожаловать в Magic AI 🤖",
-        reply_markup=main_menu()
+        "⚡ Добро пожаловать в Magic AI",
+        main_menu()
     )
 
 
@@ -116,17 +136,17 @@ def start(message):
 def handler(message):
 
     text = message.text
-    user_id = message.from_user.id
+    user = message.from_user.id
 
 
-    if text == "🏠 Главное меню":
+    if text == "⬅️ Назад":
 
-        user_modes[user_id] = None
+        user_modes[user] = None
 
-        bot.send_message(
+        send(
             message.chat.id,
             "🏠 Главное меню",
-            reply_markup=main_menu()
+            main_menu()
         )
         return
 
@@ -135,7 +155,7 @@ def handler(message):
 
         cursor.execute(
             "SELECT tokens, requests FROM users WHERE user_id=?",
-            (user_id,)
+            (user,)
         )
 
         data = cursor.fetchone()
@@ -143,92 +163,142 @@ def handler(message):
         tokens = data[0]
         requests = data[1]
 
-        profile_text = f"""
+        text_profile = f"""
 👤 Профиль
 
-🆔 ID: {user_id}
+🆔 ID: {user}
 🪙 Токены: {tokens}
 📊 Запросов: {requests}
 
-🔗 Ваша реферальная ссылка:
-https://t.me/AiMagicCreateBot?start={user_id}
+🔗 Ваша реферальная ссылка
+https://t.me/AiMagicCreateBot?start={user}
+
+💰 Хочешь заработать?
+
+Отправь эту ссылку друзьям.
+За каждого приглашённого друга
+ты получишь 15 токенов.
 """
 
-        bot.send_message(
+        send(
             message.chat.id,
-            profile_text,
-            reply_markup=profile_menu()
-        )
-        return
-
-
-    if text == "🧠 Твой умный собеседник":
-
-        user_modes[user_id] = "chat"
-
-        bot.send_message(
-            message.chat.id,
-            """🤖 Привет!
-
-Я твой умный собеседник 😊  
-Можешь говорить со мной о чем угодно.
-
-Задай любой вопрос.
-
-Чтобы выйти нажми:
-🏠 Главное меню"""
+            text_profile,
+            back()
         )
         return
 
 
     if text == "🥷 Убийца фотошопа":
 
-        user_modes[user_id] = "image"
+        user_modes[user] = "image"
 
-        bot.send_message(
+        send(
             message.chat.id,
             """🥷 Убийца фотошопа
 
-Привет! 🎨
+🎨 Привет!
 
-Напиши запрос для генерации картинки.
+Напиши описание изображения
+или отправь фото и напиши
+что нужно изменить.
 
-Или отправь изображение и напиши,
-что изменить на нём.
-
-Чтобы выйти нажми:
-🏠 Главное меню"""
+⏳ ИИ готов к генерации...""",
+            back()
         )
         return
 
 
-    if text == "🔉 Аудио с ИИ":
+    if text == "🧠 Твой умный собеседник":
 
-        bot.send_message(
+        user_modes[user] = "chat"
+
+        send(
             message.chat.id,
-            "🎧 Раздел аудио пока в разработке",
-            reply_markup=main_menu()
+            """🤖 Привет!
+
+Я твой умный собеседник.
+
+Можешь задать любой вопрос,
+попросить совет или просто
+поговорить со мной.
+
+🧠 Я готов к диалогу.""",
+            back()
         )
         return
 
 
     if text == "🎥 Видео будущего":
 
-        bot.send_message(
+        send(
             message.chat.id,
-            "🎬 Видео генерация скоро появится",
-            reply_markup=main_menu()
+            """🎥 Видео будущего
+
+🚀 Скоро здесь появится
+генерация AI видео.
+
+Следи за обновлениями!""",
+            back()
         )
         return
 
 
-    if text == "⁉️ Помощь":
+    if text == "🔉 Аудио с ИИ":
+
+        send(
+            message.chat.id,
+            """🔉 Аудио с ИИ
+
+🎧 Генерация аудио скоро
+появится в этом разделе.""",
+            back()
+        )
+        return
+
+
+    if text == "❓ Помощь":
+
+        send(
+            message.chat.id,
+            """❓ Помощь
+
+Если возникли вопросы —
+обратитесь в поддержку.""",
+            back()
+        )
+        return
+
+
+    mode = user_modes.get(user)
+
+
+    if mode == "chat":
+
+        send(
+            message.chat.id,
+            "🧠 ИИ думает..."
+        )
 
         bot.send_message(
             message.chat.id,
-            "🚨 Напишите в поддержку",
-            reply_markup=main_menu()
+            "🤖 Пока ИИ не подключён. Скоро добавим."
         )
+
+        return
+
+
+    if mode == "image":
+
+        send(
+            message.chat.id,
+            "🎨 Генерирую изображение..."
+        )
+
+        bot.send_message(
+            message.chat.id,
+            "🖼 Генерация скоро будет подключена."
+        )
+
         return
 
 
