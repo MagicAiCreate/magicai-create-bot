@@ -7,6 +7,7 @@ import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -163,6 +164,49 @@ def ask_gpt(user_id, text):
     return answer
 
 
+# Flux генерация
+def generate_flux(prompt):
+
+    headers = {
+        "Authorization": f"Token {REPLICATE_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "version": "black-forest-labs/flux-schnell",
+        "input": {
+            "prompt": prompt,
+            "aspect_ratio": "9:16"
+        }
+    }
+
+    r = requests.post(
+        "https://api.replicate.com/v1/predictions",
+        headers=headers,
+        json=data
+    )
+
+    prediction = r.json()
+    prediction_id = prediction["id"]
+
+    while True:
+
+        r = requests.get(
+            f"https://api.replicate.com/v1/predictions/{prediction_id}",
+            headers=headers
+        )
+
+        result = r.json()
+
+        if result["status"] == "succeeded":
+            return result["output"][0]
+
+        if result["status"] == "failed":
+            return None
+
+        time.sleep(1)
+
+
 # удаление старого сообщения
 def clean(chat_id):
 
@@ -211,7 +255,6 @@ def back():
     return kb
 
 
-# старт
 @bot.message_handler(commands=['start'])
 def start(message):
 
@@ -233,44 +276,6 @@ def start(message):
     )
 
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-
-    user = call.from_user.id
-
-    if call.data == "buy_50":
-
-        bot.answer_callback_query(call.id)
-
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + 50 WHERE user_id=?",
-            (user,)
-        )
-
-        db.commit()
-
-        bot.send_message(
-            call.message.chat.id,
-            "⭐ Вам начислено 50 токенов."
-        )
-
-    if call.data == "buy_150":
-
-        bot.answer_callback_query(call.id)
-
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + 150 WHERE user_id=?",
-            (user,)
-        )
-
-        db.commit()
-
-        bot.send_message(
-            call.message.chat.id,
-            "⭐ Вам начислено 150 токенов."
-        )
-
-
 @bot.message_handler(func=lambda message: True)
 def handler(message):
 
@@ -278,88 +283,11 @@ def handler(message):
     user = message.from_user.id
     mode = user_modes.get(user)
 
-    # эффект Таноса
     if mode not in ["chat", "image", "audio", "video"]:
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except:
             pass
-
-
-    if text == "⬅️ Назад":
-
-        user_modes[user] = None
-
-        send(
-            message.chat.id,
-            "🏠 Главное меню",
-            main_menu()
-        )
-        return
-
-
-    if text == "💰 Купить токены":
-
-        kb = telebot.types.InlineKeyboardMarkup()
-
-        kb.add(
-            telebot.types.InlineKeyboardButton(
-                "50 токенов ⭐50",
-                callback_data="buy_50"
-            )
-        )
-
-        kb.add(
-            telebot.types.InlineKeyboardButton(
-                "150 токенов ⭐120",
-                callback_data="buy_150"
-            )
-        )
-
-        bot.send_message(
-            message.chat.id,
-            "💳 Выберите пакет токенов:",
-            reply_markup=kb
-        )
-        return
-
-
-    if text == "👤 Профиль":
-
-        cursor.execute(
-            "SELECT tokens, requests FROM users WHERE user_id=?",
-            (user,)
-        )
-
-        tokens, requests_count = cursor.fetchone()
-
-        text_profile = f"""
-👤 Ваш профиль
-
-━━━━━━━━━━━━━━━
-
-🆔 ID: {user}
-
-🪙 Баланс токенов: {tokens}
-
-📊 Использовано запросов: {requests_count}
-
-━━━━━━━━━━━━━━━
-
-🔗 Ваша реферальная ссылка
-
-https://t.me/AiMagicCreateBot?start={user}
-
-💸 Приглашайте друзей и получайте
-+15 токенов за каждого нового пользователя.
-"""
-
-        send(
-            message.chat.id,
-            text_profile,
-            back()
-        )
-        return
 
 
     if text == "🥷 Убийца фотошопа":
@@ -390,110 +318,55 @@ https://t.me/AiMagicCreateBot?start={user}
         return
 
 
-    if text == "🧠 Твой умный собеседник":
-
-        user_modes[user] = "chat"
-
-        send(
-            message.chat.id,
-            """🧠 Твой умный собеседник!
-
-Привет, хочешь просто поговорить или что-то узнать? Пиши, отвечу)""",
-            back()
-        )
-        return
-
-
-    if text == "🎥 Видео будущего":
-
-        user_modes[user] = "video"
-
-        send(
-            message.chat.id,
-            """🎥 Генерация видео
-
-Скоро здесь появится
-создание AI видео.""",
-            back()
-        )
-        return
-
-
-    if text == "🔉 Аудио с ИИ":
-
-        user_modes[user] = "audio"
-
-        send(
-            message.chat.id,
-            """🔉 Генерация аудио
-
-Функция скоро появится.""",
-            back()
-        )
-        return
-
-
-    if text == "❓ Помощь":
-
-        send(
-            message.chat.id,
-            """❓ Помощь
-
-Если возникли вопросы —
-напишите в поддержку.""",
-            back()
-        )
-        return
-
-
-    if mode == "chat":
-
-        msg = bot.send_message(
-            message.chat.id,
-            "⚡ Запрос получен..."
-        )
-
-        time.sleep(0.7)
-
-        bot.edit_message_text(
-            "🧠 Анализирую данные...",
-            message.chat.id,
-            msg.message_id
-        )
-
-        time.sleep(0.7)
-
-        bot.edit_message_text(
-            "🤖 Генерирую ответ...",
-            message.chat.id,
-            msg.message_id
-        )
-
-        answer = ask_gpt(user, text)
-
-        bot.edit_message_text(
-            f"✨ {answer}",
-            message.chat.id,
-            msg.message_id
-        )
-
-        return
-
-
     if mode == "image":
+
+        cursor.execute(
+            "SELECT tokens FROM users WHERE user_id=?",
+            (user,)
+        )
+
+        tokens = cursor.fetchone()[0]
+
+        if tokens < 25:
+
+            bot.send_message(
+                message.chat.id,
+                "❌ Недостаточно токенов. Нужно 25."
+            )
+            return
+
 
         msg = bot.send_message(
             message.chat.id,
             "🎨 Генерирую изображение..."
         )
 
-        time.sleep(1)
+        image_url = generate_flux(text)
 
-        bot.edit_message_text(
-            "🖼 Генерация скоро будет подключена.",
-            message.chat.id,
-            msg.message_id
-        )
+        if image_url:
+
+            cursor.execute(
+                "UPDATE users SET tokens = tokens - 25 WHERE user_id=?",
+                (user,)
+            )
+
+            db.commit()
+
+            bot.delete_message(message.chat.id, msg.message_id)
+
+            bot.send_photo(
+                message.chat.id,
+                image_url,
+                caption="✨ Готово!"
+            )
+
+        else:
+
+            bot.edit_message_text(
+                "❌ Ошибка генерации",
+                message.chat.id,
+                msg.message_id
+            )
 
         return
 
