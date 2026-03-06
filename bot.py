@@ -392,6 +392,12 @@ def photo_handler(message):
     user = message.from_user.id
     mode = user_modes.get(user)
 
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user,))
+    exists = cursor.fetchone()
+
+    if not exists:
+        register_user(message.from_user)
+
     if mode != "image":
         return
 
@@ -411,8 +417,14 @@ def handler(message):
     user = message.from_user.id
     mode = user_modes.get(user)
 
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user,))
+    exists = cursor.fetchone()
+
+    if not exists:
+        register_user(message.from_user)
+
     # эффект Таноса
-    if mode not in ["chat", "image", "audio", "video"]:
+    if mode is None:
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except:
