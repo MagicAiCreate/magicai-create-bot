@@ -3,6 +3,7 @@ import sqlite3
 import os
 import time
 import requests
+import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
@@ -11,7 +12,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 user_modes = {}
 last_messages = {}
-user_memory = {}
 
 # база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
@@ -24,6 +24,13 @@ username TEXT,
 tokens INTEGER,
 requests INTEGER,
 referrer INTEGER
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS memory(
+user_id INTEGER PRIMARY KEY,
+history TEXT
 )
 """)
 
@@ -65,15 +72,70 @@ def register_user(user, ref=None):
     db.commit()
 
 
-# GPT функция с памятью
-def ask_gpt(user_id, text):
+# память GPT
+def get_memory(user_id):
 
-    if user_id not in user_memory:
-        user_memory[user_id] = [
+    cursor.execute("SELECT history FROM memory WHERE user_id=?", (user_id,))
+    data = cursor.fetchone()
+
+    if data is None:
+
+        history = [
             {"role": "system", "content": "Ты дружелюбный умный AI помощник."}
         ]
 
-    user_memory[user_id].append({
+        cursor.execute(
+            "INSERT INTO memory VALUES(?,?)",
+            (user_id, json.dumps(history))
+        )
+
+        db.commit()
+
+        return history
+
+    return json.loads(data[0])
+
+
+def save_memory(user_id, history):
+
+    cursor.execute(
+        "UPDATE memory SET history=? WHERE user_id=?",
+        (json.dumps(history), user_id)
+    )
+
+    db.commit()
+
+
+def clear_memory(user_id):
+
+    history = [
+        {"role": "system", "content": "Ты дружелюбный умный AI помощник."}
+    ]
+
+    cursor.execute(
+        "UPDATE memory SET history=? WHERE user_id=?",
+        (json.dumps(history), user_id)
+    )
+
+    db.commit()
+
+
+# GPT функция
+def ask_gpt(user_id, text):
+
+    cursor.execute(
+        "SELECT tokens FROM users WHERE user_id=?",
+        (user_id,)
+    )
+
+    tokens = cursor.fetchone()[0]
+
+    if tokens <= 0:
+        return "❌ У вас закончились токены."
+
+    history = get_memory(user_id)
+
+    history.append({
         "role": "user",
         "content": text
     })
@@ -87,7 +149,7 @@ def ask_gpt(user_id, text):
 
     data = {
         "model": "gpt-4o-mini",
-        "messages": user_memory[user_id],
+        "messages": history,
         "temperature": 0.7
     }
 
@@ -95,19 +157,27 @@ def ask_gpt(user_id, text):
 
     answer = r.json()["choices"][0]["message"]["content"]
 
-    user_memory[user_id].append({
+    history.append({
         "role": "assistant",
         "content": answer
     })
 
-    # ограничение памяти
-    if len(user_memory[user_id]) > 20:
-        user_memory[user_id] = user_memory[user_id][-20:]
+    if len(history) > 20:
+        history = history[-20:]
+
+    save_memory(user_id, history)
+
+    cursor.execute(
+        "UPDATE users SET tokens = tokens - 1, requests = requests + 1 WHERE user_id=?",
+        (user_id,)
+    )
+
+    db.commit()
 
     return answer
 
 
-# удаление старого сообщения (эффект Таноса)
+# удаление старого сообщения
 def clean(chat_id):
 
     if chat_id in last_messages:
@@ -139,7 +209,8 @@ def main_menu():
 
     kb.row("🥷 Убийца фотошопа", "🧠 Твой умный собеседник")
     kb.row("🎥 Видео будущего", "🔉 Аудио с ИИ")
-    kb.row("👤 Профиль", "❓ Помощь")
+    kb.row("👤 Профиль", "💰 Купить токены")
+    kb.row("❓ Помощь")
 
     return kb
 
@@ -149,7 +220,7 @@ def back():
 
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    kb.row("⬅️ Назад")
+    kb.row("⬅️ Назад", "🧹 Очистить диалог")
 
     return kb
 
@@ -159,11 +230,9 @@ def back():
 def start(message):
 
     ref = None
-
     args = message.text.split()
 
     if len(args) > 1:
-
         try:
             ref = int(args[1])
         except:
@@ -178,17 +247,56 @@ def start(message):
     )
 
 
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+
+    user = call.from_user.id
+
+    if call.data == "buy_50":
+
+        bot.answer_callback_query(call.id)
+
+        cursor.execute(
+            "UPDATE users SET tokens = tokens + 50 WHERE user_id=?",
+            (user,)
+        )
+
+        db.commit()
+
+        bot.send_message(
+            call.message.chat.id,
+            "⭐ Оплата прошла. Вам начислено 50 токенов."
+        )
+
+    if call.data == "buy_150":
+
+        bot.answer_callback_query(call.id)
+
+        cursor.execute(
+            "UPDATE users SET tokens = tokens + 150 WHERE user_id=?",
+            (user,)
+        )
+
+        db.commit()
+
+        bot.send_message(
+            call.message.chat.id,
+            "⭐ Оплата прошла. Вам начислено 150 токенов."
+        )
+
+
 @bot.message_handler(func=lambda message: True)
 def handler(message):
 
     text = message.text
     user = message.from_user.id
+    mode = user_modes.get(user)
 
-    # эффект Таноса для сообщений пользователя
-    try:
-        bot.delete_message(message.chat.id, message.message_id)
-    except:
-        pass
+    if mode not in ["chat", "image", "audio", "video"]:
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except:
+            pass
 
 
     if text == "⬅️ Назад":
@@ -203,6 +311,43 @@ def handler(message):
         return
 
 
+    if text == "🧹 Очистить диалог":
+
+        clear_memory(user)
+
+        bot.send_message(
+            message.chat.id,
+            "🧠 Память диалога очищена."
+        )
+        return
+
+
+    if text == "💰 Купить токены":
+
+        kb = telebot.types.InlineKeyboardMarkup()
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "50 токенов ⭐50",
+                callback_data="buy_50"
+            )
+        )
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "150 токенов ⭐120",
+                callback_data="buy_150"
+            )
+        )
+
+        bot.send_message(
+            message.chat.id,
+            "Выберите пакет токенов:",
+            reply_markup=kb
+        )
+        return
+
+
     if text == "👤 Профиль":
 
         cursor.execute(
@@ -210,17 +355,14 @@ def handler(message):
             (user,)
         )
 
-        data = cursor.fetchone()
-
-        tokens = data[0]
-        requests = data[1]
+        tokens, requests_count = cursor.fetchone()
 
         text_profile = f"""
 👤 Профиль
 
 🆔 ID: {user}
 🪙 Токены: {tokens}
-📊 Запросов: {requests}
+📊 Запросов: {requests_count}
 
 🔗 Ваша реферальная ссылка
 https://t.me/AiMagicCreateBot?start={user}
@@ -282,6 +424,8 @@ https://t.me/AiMagicCreateBot?start={user}
 
     if text == "🎥 Видео будущего":
 
+        user_modes[user] = "video"
+
         send(
             message.chat.id,
             """🎥 Видео будущего
@@ -296,6 +440,8 @@ https://t.me/AiMagicCreateBot?start={user}
 
 
     if text == "🔉 Аудио с ИИ":
+
+        user_modes[user] = "audio"
 
         send(
             message.chat.id,
@@ -319,9 +465,6 @@ https://t.me/AiMagicCreateBot?start={user}
             back()
         )
         return
-
-
-    mode = user_modes.get(user)
 
 
     if mode == "chat":
