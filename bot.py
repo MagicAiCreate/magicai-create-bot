@@ -118,7 +118,11 @@ def ask_gpt(user_id, text):
         (user_id,)
     )
 
-    tokens = cursor.fetchone()[0]
+    row = cursor.fetchone()
+    if not row:
+        return "❌ Пользователь не найден."
+
+    tokens = row[0]
 
     if tokens <= 0:
         return "❌ У вас закончились токены."
@@ -143,7 +147,7 @@ def ask_gpt(user_id, text):
         "temperature": 0.7
     }
 
-    r = requests.post(url, headers=headers, json=data)
+    r = requests.post(url, headers=headers, json=data, timeout=90)
     result = r.json()
 
     if "choices" not in result:
@@ -174,10 +178,10 @@ def ask_gpt(user_id, text):
 # генерация изображения по тексту
 def generate_flux(prompt):
 
-    url = "https://api.bfl.ml/v1/flux"
+    url = "https://api.bfl.ai/v1/flux-2-pro"
 
     headers = {
-        "Authorization": "Bearer " + FLUX_API_KEY,
+        "x-key": FLUX_API_KEY,
         "Content-Type": "application/json"
     }
 
@@ -186,31 +190,86 @@ def generate_flux(prompt):
         "aspect_ratio": "1:1"
     }
 
-    r = requests.post(url, headers=headers, json=data)
+    r = requests.post(url, headers=headers, json=data, timeout=120)
     result = r.json()
 
-    return result.get("image_url")
+    if "id" in result:
+        request_id = result["id"]
+    elif "request_id" in result:
+        request_id = result["request_id"]
+    else:
+        return None
+
+    while True:
+
+        poll = requests.get(
+            f"https://api.bfl.ai/v1/get_result?id={request_id}",
+            headers={"x-key": FLUX_API_KEY},
+            timeout=120
+        )
+
+        poll_result = poll.json()
+
+        status = poll_result.get("status")
+
+        if status in ["Ready", "ready", "succeeded", "SUCCESS"]:
+            if "result" in poll_result and isinstance(poll_result["result"], dict):
+                return poll_result["result"].get("sample") or poll_result["result"].get("image_url")
+            return poll_result.get("sample") or poll_result.get("image_url")
+
+        if status in ["Error", "error", "failed", "FAILURE"]:
+            return None
+
+        time.sleep(2)
 
 
 # редактирование изображения
 def edit_image(image_url, prompt):
 
-    url = "https://api.bfl.ml/v1/edit"
+    url = "https://api.bfl.ai/v1/flux-2-pro"
 
     headers = {
-        "Authorization": "Bearer " + FLUX_API_KEY,
+        "x-key": FLUX_API_KEY,
         "Content-Type": "application/json"
     }
 
     data = {
-        "image": image_url,
-        "prompt": prompt
+        "prompt": prompt,
+        "input_image": image_url,
+        "aspect_ratio": "1:1"
     }
 
-    r = requests.post(url, headers=headers, json=data)
+    r = requests.post(url, headers=headers, json=data, timeout=120)
     result = r.json()
 
-    return result.get("image_url")
+    if "id" in result:
+        request_id = result["id"]
+    elif "request_id" in result:
+        request_id = result["request_id"]
+    else:
+        return None
+
+    while True:
+
+        poll = requests.get(
+            f"https://api.bfl.ai/v1/get_result?id={request_id}",
+            headers={"x-key": FLUX_API_KEY},
+            timeout=120
+        )
+
+        poll_result = poll.json()
+
+        status = poll_result.get("status")
+
+        if status in ["Ready", "ready", "succeeded", "SUCCESS"]:
+            if "result" in poll_result and isinstance(poll_result["result"], dict):
+                return poll_result["result"].get("sample") or poll_result["result"].get("image_url")
+            return poll_result.get("sample") or poll_result.get("image_url")
+
+        if status in ["Error", "error", "failed", "FAILURE"]:
+            return None
+
+        time.sleep(2)
 
 
 # удаление старого сообщения
@@ -399,7 +458,12 @@ def handler(message):
             (user,)
         )
 
-        tokens, requests_count = cursor.fetchone()
+        row = cursor.fetchone()
+        if not row:
+            bot.send_message(message.chat.id, "❌ Профиль не найден.")
+            return
+
+        tokens, requests_count = row
 
         text_profile = f"""
 👤 Ваш профиль
@@ -554,7 +618,13 @@ https://t.me/AiMagicCreateBot?start={user}
             "SELECT tokens FROM users WHERE user_id=?",
             (user,)
         )
-        tokens = cursor.fetchone()[0]
+        row = cursor.fetchone()
+
+        if not row:
+            bot.send_message(message.chat.id, "❌ Профиль не найден.")
+            return
+
+        tokens = row[0]
 
         if tokens < 25:
             bot.send_message(
