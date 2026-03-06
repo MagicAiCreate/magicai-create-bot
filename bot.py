@@ -7,6 +7,7 @@ import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+FLUX_API_KEY = os.getenv("FLUX_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -143,8 +144,12 @@ def ask_gpt(user_id, text):
     }
 
     r = requests.post(url, headers=headers, json=data)
+    result = r.json()
 
-    answer = r.json()["choices"][0]["message"]["content"]
+    if "choices" not in result:
+        return "❌ Ошибка ответа от AI."
+
+    answer = result["choices"][0]["message"]["content"]
 
     history.append({
         "role": "assistant",
@@ -166,13 +171,13 @@ def ask_gpt(user_id, text):
     return answer
 
 
-# генерация изображения
+# генерация изображения по тексту
 def generate_flux(prompt):
 
     url = "https://api.bfl.ml/v1/flux"
 
     headers = {
-        "Authorization": "Bearer " + os.getenv("FLUX_API_KEY"),
+        "Authorization": "Bearer " + FLUX_API_KEY,
         "Content-Type": "application/json"
     }
 
@@ -184,7 +189,7 @@ def generate_flux(prompt):
     r = requests.post(url, headers=headers, json=data)
     result = r.json()
 
-    return result["image_url"]
+    return result.get("image_url")
 
 
 # редактирование изображения
@@ -193,7 +198,7 @@ def edit_image(image_url, prompt):
     url = "https://api.bfl.ml/v1/edit"
 
     headers = {
-        "Authorization": "Bearer " + os.getenv("FLUX_API_KEY"),
+        "Authorization": "Bearer " + FLUX_API_KEY,
         "Content-Type": "application/json"
     }
 
@@ -205,7 +210,7 @@ def edit_image(image_url, prompt):
     r = requests.post(url, headers=headers, json=data)
     result = r.json()
 
-    return result["image_url"]
+    return result.get("image_url")
 
 
 # удаление старого сообщения
@@ -278,6 +283,44 @@ def start(message):
     )
 
 
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+
+    user = call.from_user.id
+
+    if call.data == "buy_50":
+
+        bot.answer_callback_query(call.id)
+
+        cursor.execute(
+            "UPDATE users SET tokens = tokens + 50 WHERE user_id=?",
+            (user,)
+        )
+
+        db.commit()
+
+        bot.send_message(
+            call.message.chat.id,
+            "⭐ Вам начислено 50 токенов."
+        )
+
+    if call.data == "buy_150":
+
+        bot.answer_callback_query(call.id)
+
+        cursor.execute(
+            "UPDATE users SET tokens = tokens + 150 WHERE user_id=?",
+            (user,)
+        )
+
+        db.commit()
+
+        bot.send_message(
+            call.message.chat.id,
+            "⭐ Вам начислено 150 токенов."
+        )
+
+
 @bot.message_handler(content_types=['photo'])
 def photo_handler(message):
 
@@ -296,14 +339,229 @@ def photo_handler(message):
     )
 
 
-@bot.message_handler(func=lambda message: True)
+@bot.message_handler(content_types=['text'])
 def handler(message):
 
     text = message.text
     user = message.from_user.id
     mode = user_modes.get(user)
 
+    # эффект Таноса
+    if mode not in ["chat", "image", "audio", "video"]:
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except:
+            pass
+
+
+    if text == "⬅️ Назад":
+
+        user_modes[user] = None
+
+        send(
+            message.chat.id,
+            "🏠 Главное меню",
+            main_menu()
+        )
+        return
+
+
+    if text == "💰 Купить токены":
+
+        kb = telebot.types.InlineKeyboardMarkup()
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "50 токенов ⭐50",
+                callback_data="buy_50"
+            )
+        )
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "150 токенов ⭐120",
+                callback_data="buy_150"
+            )
+        )
+
+        bot.send_message(
+            message.chat.id,
+            "💳 Выберите пакет токенов:",
+            reply_markup=kb
+        )
+        return
+
+
+    if text == "👤 Профиль":
+
+        cursor.execute(
+            "SELECT tokens, requests FROM users WHERE user_id=?",
+            (user,)
+        )
+
+        tokens, requests_count = cursor.fetchone()
+
+        text_profile = f"""
+👤 Ваш профиль
+
+━━━━━━━━━━━━━━━
+
+🆔 ID: {user}
+
+🪙 Баланс токенов: {tokens}
+
+📊 Использовано запросов: {requests_count}
+
+━━━━━━━━━━━━━━━
+
+🔗 Ваша реферальная ссылка
+
+https://t.me/AiMagicCreateBot?start={user}
+
+💸 Приглашайте друзей и получайте
++15 токенов за каждого нового пользователя.
+"""
+
+        send(
+            message.chat.id,
+            text_profile,
+            back()
+        )
+        return
+
+
+    if text == "🥷 Убийца фотошопа":
+
+        user_modes[user] = "image"
+
+        send(
+            message.chat.id,
+            """🥷 Убийца фотошопа
+
+Создавайте изображения по текстовому описанию.
+
+Например:
+• Машина, деньги на капоте, вечер, дождь, Москва-Сити, формат 9:16.
+
+Или загрузите фото и укажите, что изменить:
+• удалить объект
+• заменить фон
+• улучшить качество
+• изменить стиль
+• добавить новый элемент
+
+Обработка занимает несколько секунд.
+
+Тариф: ⚡️25 токенов""",
+            back()
+        )
+        return
+
+
+    if text == "🧠 Твой умный собеседник":
+
+        user_modes[user] = "chat"
+
+        send(
+            message.chat.id,
+            """🧠 Твой умный собеседник!
+
+Привет, хочешь просто поговорить или что-то узнать? Пиши, отвечу)""",
+            back()
+        )
+        return
+
+
+    if text == "🎥 Видео будущего":
+
+        user_modes[user] = "video"
+
+        send(
+            message.chat.id,
+            """🎥 Генерация видео
+
+Скоро здесь появится
+создание AI видео.""",
+            back()
+        )
+        return
+
+
+    if text == "🔉 Аудио с ИИ":
+
+        user_modes[user] = "audio"
+
+        send(
+            message.chat.id,
+            """🔉 Генерация аудио
+
+Функция скоро появится.""",
+            back()
+        )
+        return
+
+
+    if text == "❓ Помощь":
+
+        send(
+            message.chat.id,
+            """❓ Помощь
+
+Если возникли вопросы —
+напишите в поддержку.""",
+            back()
+        )
+        return
+
+
+    if mode == "chat":
+
+        msg = bot.send_message(
+            message.chat.id,
+            "⚡ Запрос получен..."
+        )
+
+        time.sleep(0.7)
+
+        bot.edit_message_text(
+            "🧠 Анализирую данные...",
+            message.chat.id,
+            msg.message_id
+        )
+
+        time.sleep(0.7)
+
+        bot.edit_message_text(
+            "🤖 Генерирую ответ...",
+            message.chat.id,
+            msg.message_id
+        )
+
+        answer = ask_gpt(user, text)
+
+        bot.edit_message_text(
+            f"✨ {answer}",
+            message.chat.id,
+            msg.message_id
+        )
+
+        return
+
+
     if mode == "image":
+
+        cursor.execute(
+            "SELECT tokens FROM users WHERE user_id=?",
+            (user,)
+        )
+        tokens = cursor.fetchone()[0]
+
+        if tokens < 25:
+            bot.send_message(
+                message.chat.id,
+                "❌ Недостаточно токенов. Нужно 25."
+            )
+            return
 
         if user in pending_edit:
 
@@ -320,9 +578,32 @@ def handler(message):
 
             result = edit_image(file_url, text)
 
-            bot.send_photo(message.chat.id, result)
+            if result:
+                cursor.execute(
+                    "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
+                    (user,)
+                )
+                db.commit()
+
+                bot.delete_message(message.chat.id, msg.message_id)
+                bot.send_photo(message.chat.id, result)
+            else:
+                bot.edit_message_text(
+                    "❌ Ошибка при обработке изображения.",
+                    message.chat.id,
+                    msg.message_id
+                )
 
             return
+
+        if generation_lock.get(user):
+            bot.send_message(
+                message.chat.id,
+                "⏳ Подождите завершения прошлой генерации."
+            )
+            return
+
+        generation_lock[user] = True
 
         msg = bot.send_message(
             message.chat.id,
@@ -331,7 +612,23 @@ def handler(message):
 
         result = generate_flux(text)
 
-        bot.send_photo(message.chat.id, result)
+        if result:
+            cursor.execute(
+                "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
+                (user,)
+            )
+            db.commit()
+
+            bot.delete_message(message.chat.id, msg.message_id)
+            bot.send_photo(message.chat.id, result)
+        else:
+            bot.edit_message_text(
+                "❌ Ошибка генерации изображения.",
+                message.chat.id,
+                msg.message_id
+            )
+
+        generation_lock[user] = False
 
         return
 
