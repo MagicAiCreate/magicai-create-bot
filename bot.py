@@ -1,197 +1,275 @@
 import os
 import telebot
+import sqlite3
+import time
 from telebot import types
 from openai import OpenAI
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
+ADMIN_ID = 816154985
+BOT_USERNAME = "AiMagicCreateBot"
+
 bot = telebot.TeleBot(BOT_TOKEN)
 client = OpenAI(api_key=OPENAI_KEY)
 
 chat_mode = {}
 conversation_history = {}
+cooldowns = {}
+
+db = sqlite3.connect("users.db", check_same_thread=False)
+cursor = db.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users(
+user_id INTEGER PRIMARY KEY,
+username TEXT,
+tokens INTEGER,
+requests INTEGER,
+referrer INTEGER
+)
+""")
+db.commit()
+
+
+def register_user(user, ref=None):
+
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user.id,))
+    if cursor.fetchone() is None:
+
+        cursor.execute(
+        "INSERT INTO users VALUES(?,?,?,?,?)",
+        (user.id, user.username, 50, 0, ref)
+        )
+        db.commit()
+
+        if ref:
+            cursor.execute(
+            "UPDATE users SET tokens = tokens + 20 WHERE user_id=?",
+            (ref,)
+            )
+            db.commit()
+
+
+def get_user(user_id):
+
+    cursor.execute("SELECT tokens,requests FROM users WHERE user_id=?", (user_id,))
+    return cursor.fetchone()
+
+
+def add_request(user_id):
+
+    cursor.execute(
+    "UPDATE users SET requests=requests+1 WHERE user_id=?",
+    (user_id,)
+    )
+    db.commit()
+
+
+def remove_tokens(user_id, amount):
+
+    cursor.execute(
+    "UPDATE users SET tokens=tokens-? WHERE user_id=?",
+    (amount,user_id)
+    )
+    db.commit()
 
 
 def main_menu():
 
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    keyboard.row("👤 Профиль")
-    keyboard.row("🧠 Твой умный собеседник")
-    keyboard.row("🔉 Аудио с ИИ", "🥷 Убийца фотошопа")
-    keyboard.row("🎥 Видео будущего")
-    keyboard.row("⁉️ Помощь")
+    kb.row("👤 Профиль")
+    kb.row("🧠 Твой умный собеседник")
+    kb.row("🔉 Аудио с ИИ","🥷 Убийца фотошопа")
+    kb.row("🎥 Видео будущего")
+    kb.row("💰 Купить токены")
+    kb.row("⁉️ Помощь")
 
-    return keyboard
+    return kb
 
 
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=["start"])
 def start(message):
+
+    ref = None
+
+    if len(message.text.split()) > 1:
+        ref = int(message.text.split()[1])
+
+    register_user(message.from_user, ref)
 
     chat_mode[message.chat.id] = False
 
     conversation_history[message.chat.id] = [
-        {
-            "role": "system",
-            "content": "Ты дружелюбный AI собеседник. Ты всегда помнишь предыдущие сообщения диалога и отвечаешь с учётом всей истории разговора."
-        }
+    {"role":"system","content":"Ты дружелюбный AI ассистент."}
     ]
 
     bot.send_message(
-        message.chat.id,
-        "⚡ Добро пожаловать в AI-центр",
-        reply_markup=main_menu()
+    message.chat.id,
+    "⚡ Добро пожаловать в Magic AI",
+    reply_markup=main_menu()
     )
 
 
-@bot.message_handler(func=lambda message: True)
-def handle(message):
+@bot.message_handler(func=lambda m:True)
+def handler(message):
 
     chat_id = message.chat.id
     text = message.text
 
-
-# удаляем сообщение пользователя если он не в AI-чате
     if chat_mode.get(chat_id) != True:
-
         try:
-            bot.delete_message(chat_id, message.message_id)
+            bot.delete_message(chat_id,message.message_id)
         except:
             pass
 
-
-# ПРОФИЛЬ
     if text == "👤 Профиль":
 
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        data = get_user(chat_id)
 
-        keyboard.row("💰 Баланс")
-        keyboard.row("📊 Ваши запросы")
-        keyboard.row("⭐ Подписка")
-        keyboard.row("🤝 Реферальная ссылка")
-        keyboard.row("🏠 Главное меню")
+        tokens = data[0]
+        requests = data[1]
 
-        bot.send_message(chat_id, "👤 Ваш профиль", reply_markup=keyboard)
+        ref_link = f"https://t.me/{BOT_USERNAME}?start={chat_id}"
+
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("🏠 Главное меню")
+
+        bot.send_message(
+        chat_id,
+        f"👤 Профиль\n\n"
+        f"ID: {chat_id}\n"
+        f"Токены: {tokens}\n"
+        f"Запросов: {requests}\n\n"
+        f"Ваша реферальная ссылка:\n{ref_link}",
+        reply_markup=kb
+        )
+
         return
 
 
-# AI СОБЕСЕДНИК
     if text == "🧠 Твой умный собеседник":
 
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("🚀 Начать")
+        kb.row("🏠 Главное меню")
 
-        keyboard.row("🚀 Начнем")
-        keyboard.row("🏠 Главное меню")
-
-        bot.send_message(chat_id, "Готов пообщаться с ИИ?", reply_markup=keyboard)
+        bot.send_message(chat_id,"Начать диалог?",reply_markup=kb)
         return
 
 
-    if text == "🚀 Начнем":
+    if text == "🚀 Начать":
 
         chat_mode[chat_id] = True
-
-        conversation_history[chat_id] = [
-            {
-                "role": "system",
-                "content": "Ты дружелюбный AI собеседник. Ты помнишь всю историю диалога."
-            }
-        ]
-
-        bot.send_message(chat_id, "Привет :)")
+        bot.send_message(chat_id,"Привет :)")
         return
 
 
-# АУДИО
     if text == "🔉 Аудио с ИИ":
 
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("🎙 ElevenLabs Voice")
+        kb.row("🎵 ElevenLabs Music")
+        kb.row("🏠 Главное меню")
 
-        keyboard.row("🎙️ ElevenLabs Voice")
-        keyboard.row("🎵 ElevenLabs Music")
-        keyboard.row("🏠 Главное меню")
-
-        bot.send_message(chat_id, "Раздел аудио", reply_markup=keyboard)
+        bot.send_message(chat_id,"Раздел аудио",reply_markup=kb)
         return
 
 
-# ДИЗАЙН
     if text == "🥷 Убийца фотошопа":
 
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("🍌 Nano Banana")
+        kb.row("🏠 Главное меню")
 
-        keyboard.row("🍌 Nano Banana PRO")
-        keyboard.row("🏠 Главное меню")
-
-        bot.send_message(chat_id, "Генерация изображений", reply_markup=keyboard)
+        bot.send_message(chat_id,"Генерация изображений",reply_markup=kb)
         return
 
 
-# ВИДЕО
     if text == "🎥 Видео будущего":
 
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("🎬 Kling")
+        kb.row("🏠 Главное меню")
 
-        keyboard.row("🎬 Kling")
-        keyboard.row("🏠 Главное меню")
-
-        bot.send_message(chat_id, "Генерация видео", reply_markup=keyboard)
+        bot.send_message(chat_id,"Генерация видео",reply_markup=kb)
         return
 
 
-# ПОМОЩЬ
+    if text == "💰 Купить токены":
+
+        bot.send_message(
+        chat_id,
+        "Раздел оплаты скоро появится"
+        )
+        return
+
+
     if text == "⁉️ Помощь":
 
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.row("🚨 Служба поддержки")
+        kb.row("🏠 Главное меню")
 
-        keyboard.row("🚨 Служба поддержки")
-        keyboard.row("🏠 Главное меню")
-
-        bot.send_message(chat_id, "Чем можем помочь?", reply_markup=keyboard)
+        bot.send_message(chat_id,"Напишите поддержку",reply_markup=kb)
         return
 
 
-# ГЛАВНОЕ МЕНЮ
     if text == "🏠 Главное меню":
 
         chat_mode[chat_id] = False
 
         bot.send_message(
-            chat_id,
-            "Главное меню",
-            reply_markup=main_menu()
+        chat_id,
+        "Главное меню",
+        reply_markup=main_menu()
         )
         return
 
 
-# AI ЧАТ С ПАМЯТЬЮ
     if chat_mode.get(chat_id) == True:
+
+        if chat_id in cooldowns:
+            if time.time() - cooldowns[chat_id] < 2:
+                return
+
+        cooldowns[chat_id] = time.time()
+
+        user = get_user(chat_id)
+
+        if user[0] <= 0:
+            bot.send_message(chat_id,"Недостаточно токенов")
+            return
 
         try:
 
+            remove_tokens(chat_id,1)
+            add_request(chat_id)
+
             conversation_history[chat_id].append(
-                {"role": "user", "content": text}
+            {"role":"user","content":text}
             )
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=conversation_history[chat_id]
+            model="gpt-4o-mini",
+            messages=conversation_history[chat_id]
             )
 
             answer = response.choices[0].message.content
 
             conversation_history[chat_id].append(
-                {"role": "assistant", "content": answer}
+            {"role":"assistant","content":answer}
             )
 
             conversation_history[chat_id] = conversation_history[chat_id][-20:]
 
-            bot.send_message(chat_id, answer)
+            bot.send_message(chat_id,answer)
 
         except Exception as e:
 
-            bot.send_message(chat_id, f"Ошибка: {e}")
+            bot.send_message(chat_id,f"Ошибка: {e}")
 
 
 bot.infinity_polling()
