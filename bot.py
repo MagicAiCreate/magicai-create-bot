@@ -35,22 +35,38 @@ db.commit()
 
 def register_user(user, ref=None):
 
-    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user.id,))
-    if cursor.fetchone() is None:
+    cursor.execute("SELECT user_id, referrer FROM users WHERE user_id=?", (user.id,))
+    exists = cursor.fetchone()
 
-        cursor.execute(
-        "INSERT INTO users VALUES(?,?,?,?,?)",
-        (user.id, user.username, 50, 0, ref)
-        )
-        db.commit()
+    # если пользователь уже есть в базе — ничего не делаем
+    if exists:
+        return
 
-        if ref:
+    username = user.username if user.username else "none"
+    referrer = None
+
+    # проверяем реферала
+    if ref and ref != user.id:
+
+        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (ref,))
+        ref_exists = cursor.fetchone()
+
+        if ref_exists:
+            referrer = ref
+
+            # начисляем 15 токенов пригласившему
             cursor.execute(
-            "UPDATE users SET tokens = tokens + 20 WHERE user_id=?",
-            (ref,)
+                "UPDATE users SET tokens = tokens + 15 WHERE user_id=?",
+                (ref,)
             )
-            db.commit()
 
+    # регистрируем нового пользователя
+    cursor.execute(
+        "INSERT INTO users (user_id, username, tokens, requests, referrer) VALUES (?,?,?,?,?)",
+        (user.id, username, 50, 0, referrer)
+    )
+
+    db.commit()
 
 def get_user(user_id):
 
