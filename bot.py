@@ -14,16 +14,15 @@ chat_mode = {}
 
 def main_menu():
 
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    markup.add("👤 Профиль")
-    markup.add("🧠 Твой умный собеседник")
-    markup.add("🔉 Аудио с ИИ")
-    markup.add("🥷 Убийца фотошопа")
-    markup.add("🎥 Видео будущего")
-    markup.add("⁉️ Помощь")
+    keyboard.row("👤 Профиль")
+    keyboard.row("🧠 Твой умный собеседник")
+    keyboard.row("🔉 Аудио с ИИ", "🥷 Убийца фотошопа")
+    keyboard.row("🎥 Видео будущего")
+    keyboard.row("⁉️ Помощь")
 
-    return markup
+    return keyboard
 
 
 @bot.message_handler(commands=['start'])
@@ -54,46 +53,30 @@ def handle(message):
             pass
 
 
-# ГЛАВНОЕ МЕНЮ
-
-    if text == "🏠 Главное меню":
-
-        chat_mode[chat_id] = False
-
-        bot.send_message(
-            chat_id,
-            "Главное меню",
-            reply_markup=main_menu()
-        )
-        return
-
-
 # ПРОФИЛЬ
-
     if text == "👤 Профиль":
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-        markup.add("💰 Баланс")
-        markup.add("📊 Ваши запросы")
-        markup.add("⭐ Подписка")
-        markup.add("🤝 Реферальная ссылка")
-        markup.add("🏠 Главное меню")
+        keyboard.row("💰 Баланс")
+        keyboard.row("📊 Ваши запросы")
+        keyboard.row("⭐ Подписка")
+        keyboard.row("🤝 Реферальная ссылка")
+        keyboard.row("🏠 Главное меню")
 
-        bot.send_message(chat_id, "👤 Ваш профиль", reply_markup=markup)
+        bot.send_message(chat_id, "👤 Ваш профиль", reply_markup=keyboard)
         return
 
 
-# УМНЫЙ СОБЕСЕДНИК
-
+# AI ЧАТ
     if text == "🧠 Твой умный собеседник":
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-        markup.add("🚀 Начнем")
-        markup.add("🏠 Главное меню")
+        keyboard.row("🚀 Начнем")
+        keyboard.row("🏠 Главное меню")
 
-        bot.send_message(chat_id, "Готов пообщаться с ИИ?", reply_markup=markup)
+        bot.send_message(chat_id, "Готов пообщаться с ИИ?", reply_markup=keyboard)
         return
 
 
@@ -106,60 +89,68 @@ def handle(message):
 
 
 # АУДИО
-
     if text == "🔉 Аудио с ИИ":
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-        markup.add("🎙️ ElevenLabs Voice")
-        markup.add("🎵 ElevenLabs Music")
-        markup.add("🏠 Главное меню")
+        keyboard.row("🎙️ ElevenLabs Voice")
+        keyboard.row("🎵 ElevenLabs Music")
+        keyboard.row("🏠 Главное меню")
 
-        bot.send_message(chat_id, "Раздел аудио", reply_markup=markup)
+        bot.send_message(chat_id, "Раздел аудио", reply_markup=keyboard)
         return
 
 
 # ДИЗАЙН
-
     if text == "🥷 Убийца фотошопа":
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-        markup.add("🍌 Nano Banana PRO")
-        markup.add("🏠 Главное меню")
+        keyboard.row("🍌 Nano Banana PRO")
+        keyboard.row("🏠 Главное меню")
 
-        bot.send_message(chat_id, "Генерация изображений", reply_markup=markup)
+        bot.send_message(chat_id, "Генерация изображений", reply_markup=keyboard)
         return
 
 
 # ВИДЕО
-
     if text == "🎥 Видео будущего":
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-        markup.add("🎬 Kling")
-        markup.add("🏠 Главное меню")
+        keyboard.row("🎬 Kling")
+        keyboard.row("🏠 Главное меню")
 
-        bot.send_message(chat_id, "Генерация видео", reply_markup=markup)
+        bot.send_message(chat_id, "Генерация видео", reply_markup=keyboard)
         return
 
 
 # ПОМОЩЬ
-
     if text == "⁉️ Помощь":
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-        markup.add("🚨 Служба поддержки")
-        markup.add("🏠 Главное меню")
+        keyboard.row("🚨 Служба поддержки")
+        keyboard.row("🏠 Главное меню")
 
-        bot.send_message(chat_id, "Раздел помощи", reply_markup=markup)
+        bot.send_message(chat_id, "Чем можем помочь?", reply_markup=keyboard)
+        return
+
+
+# ГЛАВНОЕ МЕНЮ
+    if text == "🏠 Главное меню":
+
+        chat_mode[chat_id] = False
+
+        bot.send_message(
+            chat_id,
+            "Главное меню",
+            reply_markup=main_menu()
+        )
         return
 
 
 # CHATGPT
-
     if chat_mode.get(chat_id) == True:
 
         try:
