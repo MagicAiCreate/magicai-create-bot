@@ -1,6 +1,6 @@
 import os
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot import types
 from openai import OpenAI
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -14,28 +14,14 @@ chat_mode = {}
 
 def main_menu():
 
-    markup = InlineKeyboardMarkup()
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    markup.row(
-        InlineKeyboardButton("👤 Профиль", callback_data="profile")
-    )
-
-    markup.row(
-        InlineKeyboardButton("🧠 Твой умный собеседник", callback_data="chat")
-    )
-
-    markup.row(
-        InlineKeyboardButton("🔉 Аудио с ИИ", callback_data="audio"),
-        InlineKeyboardButton("🥷 Убийца фотошопа", callback_data="design")
-    )
-
-    markup.row(
-        InlineKeyboardButton("🎥 Видео будущего", callback_data="video")
-    )
-
-    markup.row(
-        InlineKeyboardButton("⁉️ Помощь", callback_data="help")
-    )
+    markup.add("👤 Профиль")
+    markup.add("🧠 Твой умный собеседник")
+    markup.add("🔉 Аудио с ИИ")
+    markup.add("🥷 Убийца фотошопа")
+    markup.add("🎥 Видео будущего")
+    markup.add("⁉️ Помощь")
 
     return markup
 
@@ -47,200 +33,151 @@ def start(message):
 
     bot.send_message(
         message.chat.id,
-        "⚡ Добро пожаловать в AI-центр\n\nВыберите раздел:",
+        "⚡ Добро пожаловать в AI-центр",
         reply_markup=main_menu()
     )
 
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
+@bot.message_handler(func=lambda message: True)
+def handle(message):
 
-    chat_id = call.message.chat.id
-    msg_id = call.message.message_id
-
-
-    if call.data == "profile":
-
-        markup = InlineKeyboardMarkup()
-
-        markup.row(
-            InlineKeyboardButton("💰 Баланс", callback_data="balance")
-        )
-
-        markup.row(
-            InlineKeyboardButton("📊 Ваши запросы", callback_data="requests")
-        )
-
-        markup.row(
-            InlineKeyboardButton("⭐ Подписка", callback_data="sub")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🤝 Реферальная ссылка", callback_data="ref")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🏠 Главное меню", callback_data="menu")
-        )
-
-        bot.edit_message_text(
-            "👤 Ваш профиль",
-            chat_id,
-            msg_id,
-            reply_markup=markup
-        )
+    chat_id = message.chat.id
+    text = message.text
 
 
-    elif call.data == "chat":
+# удаляем сообщение пользователя если он не в AI-чате
+    if chat_mode.get(chat_id) != True:
 
-        markup = InlineKeyboardMarkup()
-
-        markup.row(
-            InlineKeyboardButton("🚀 Начнем", callback_data="start_chat")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🏠 Главное меню", callback_data="menu")
-        )
-
-        bot.edit_message_text(
-            "🧠 Режим AI диалога",
-            chat_id,
-            msg_id,
-            reply_markup=markup
-        )
+        try:
+            bot.delete_message(chat_id, message.message_id)
+        except:
+            pass
 
 
-    elif call.data == "start_chat":
+# ГЛАВНОЕ МЕНЮ
 
-        chat_mode[chat_id] = True
-
-        bot.send_message(
-            chat_id,
-            "Привет :)"
-        )
-
-
-    elif call.data == "audio":
-
-        markup = InlineKeyboardMarkup()
-
-        markup.row(
-            InlineKeyboardButton("🎙️ ElevenLabs Voice", callback_data="voice")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🎵 ElevenLabs Music", callback_data="music")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🏠 Главное меню", callback_data="menu")
-        )
-
-        bot.edit_message_text(
-            "🔉 Аудио с ИИ",
-            chat_id,
-            msg_id,
-            reply_markup=markup
-        )
-
-
-    elif call.data == "design":
-
-        markup = InlineKeyboardMarkup()
-
-        markup.row(
-            InlineKeyboardButton("🍌 Nano Banana PRO", callback_data="nano")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🏠 Главное меню", callback_data="menu")
-        )
-
-        bot.edit_message_text(
-            "🥷 Генерация изображений",
-            chat_id,
-            msg_id,
-            reply_markup=markup
-        )
-
-
-    elif call.data == "video":
-
-        markup = InlineKeyboardMarkup()
-
-        markup.row(
-            InlineKeyboardButton("🎬 Kling", callback_data="kling")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🏠 Главное меню", callback_data="menu")
-        )
-
-        bot.edit_message_text(
-            "🎥 Видео будущего",
-            chat_id,
-            msg_id,
-            reply_markup=markup
-        )
-
-
-    elif call.data == "help":
-
-        markup = InlineKeyboardMarkup()
-
-        markup.row(
-            InlineKeyboardButton("🚨 Служба поддержки", callback_data="support")
-        )
-
-        markup.row(
-            InlineKeyboardButton("🏠 Главное меню", callback_data="menu")
-        )
-
-        bot.edit_message_text(
-            "⁉️ Раздел помощи",
-            chat_id,
-            msg_id,
-            reply_markup=markup
-        )
-
-
-    elif call.data == "menu":
+    if text == "🏠 Главное меню":
 
         chat_mode[chat_id] = False
 
-        bot.edit_message_text(
-            "⚡ Главное меню",
+        bot.send_message(
             chat_id,
-            msg_id,
+            "Главное меню",
             reply_markup=main_menu()
         )
-
-
-@bot.message_handler(func=lambda message: True)
-def chat(message):
-
-    chat_id = message.chat.id
-
-    if chat_mode.get(chat_id) != True:
         return
 
-    try:
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "user", "content": message.text}
-            ]
-        )
+# ПРОФИЛЬ
 
-        answer = response.choices[0].message.content
+    if text == "👤 Профиль":
 
-        bot.send_message(chat_id, answer)
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    except Exception as e:
+        markup.add("💰 Баланс")
+        markup.add("📊 Ваши запросы")
+        markup.add("⭐ Подписка")
+        markup.add("🤝 Реферальная ссылка")
+        markup.add("🏠 Главное меню")
 
-        bot.send_message(chat_id, f"Ошибка: {e}")
+        bot.send_message(chat_id, "👤 Ваш профиль", reply_markup=markup)
+        return
+
+
+# УМНЫЙ СОБЕСЕДНИК
+
+    if text == "🧠 Твой умный собеседник":
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+        markup.add("🚀 Начнем")
+        markup.add("🏠 Главное меню")
+
+        bot.send_message(chat_id, "Готов пообщаться с ИИ?", reply_markup=markup)
+        return
+
+
+    if text == "🚀 Начнем":
+
+        chat_mode[chat_id] = True
+
+        bot.send_message(chat_id, "Привет :)")
+        return
+
+
+# АУДИО
+
+    if text == "🔉 Аудио с ИИ":
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+        markup.add("🎙️ ElevenLabs Voice")
+        markup.add("🎵 ElevenLabs Music")
+        markup.add("🏠 Главное меню")
+
+        bot.send_message(chat_id, "Раздел аудио", reply_markup=markup)
+        return
+
+
+# ДИЗАЙН
+
+    if text == "🥷 Убийца фотошопа":
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+        markup.add("🍌 Nano Banana PRO")
+        markup.add("🏠 Главное меню")
+
+        bot.send_message(chat_id, "Генерация изображений", reply_markup=markup)
+        return
+
+
+# ВИДЕО
+
+    if text == "🎥 Видео будущего":
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+        markup.add("🎬 Kling")
+        markup.add("🏠 Главное меню")
+
+        bot.send_message(chat_id, "Генерация видео", reply_markup=markup)
+        return
+
+
+# ПОМОЩЬ
+
+    if text == "⁉️ Помощь":
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+        markup.add("🚨 Служба поддержки")
+        markup.add("🏠 Главное меню")
+
+        bot.send_message(chat_id, "Раздел помощи", reply_markup=markup)
+        return
+
+
+# CHATGPT
+
+    if chat_mode.get(chat_id) == True:
+
+        try:
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "user", "content": text}
+                ]
+            )
+
+            answer = response.choices[0].message.content
+
+            bot.send_message(chat_id, answer)
+
+        except Exception as e:
+
+            bot.send_message(chat_id, f"Ошибка: {e}")
 
 
 bot.infinity_polling()
