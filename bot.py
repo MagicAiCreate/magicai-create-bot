@@ -1,12 +1,14 @@
 import telebot
 import sqlite3
 import os
+import time
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 user_modes = {}
+last_messages = {}
 
 # база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
@@ -60,6 +62,31 @@ def register_user(user, ref=None):
     db.commit()
 
 
+# удаление старого сообщения (эффект Таноса)
+def clean(chat_id):
+
+    if chat_id in last_messages:
+
+        try:
+            bot.delete_message(chat_id, last_messages[chat_id])
+        except:
+            pass
+
+
+# отправка нового сообщения
+def send(chat_id, text, keyboard=None):
+
+    clean(chat_id)
+
+    msg = bot.send_message(
+        chat_id,
+        text,
+        reply_markup=keyboard
+    )
+
+    last_messages[chat_id] = msg.message_id
+
+
 # главное меню
 def main_menu():
 
@@ -99,10 +126,10 @@ def start(message):
 
     register_user(message.from_user, ref)
 
-    bot.send_message(
+    send(
         message.chat.id,
         "⚡ Добро пожаловать в Magic AI",
-        reply_markup=main_menu()
+        main_menu()
     )
 
 
@@ -112,15 +139,21 @@ def handler(message):
     text = message.text
     user = message.from_user.id
 
+    # эффект Таноса для сообщений пользователя
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+    except:
+        pass
+
 
     if text == "⬅️ Назад":
 
         user_modes[user] = None
 
-        bot.send_message(
+        send(
             message.chat.id,
             "🏠 Главное меню",
-            reply_markup=main_menu()
+            main_menu()
         )
         return
 
@@ -154,10 +187,10 @@ https://t.me/AiMagicCreateBot?start={user}
 ты получишь 15 токенов.
 """
 
-        bot.send_message(
+        send(
             message.chat.id,
             text_profile,
-            reply_markup=back()
+            back()
         )
         return
 
@@ -166,7 +199,7 @@ https://t.me/AiMagicCreateBot?start={user}
 
         user_modes[user] = "image"
 
-        bot.send_message(
+        send(
             message.chat.id,
             """🥷 Убийца фотошопа
 
@@ -177,7 +210,7 @@ https://t.me/AiMagicCreateBot?start={user}
 что нужно изменить.
 
 ⏳ ИИ готов к генерации...""",
-            reply_markup=back()
+            back()
         )
         return
 
@@ -186,7 +219,7 @@ https://t.me/AiMagicCreateBot?start={user}
 
         user_modes[user] = "chat"
 
-        bot.send_message(
+        send(
             message.chat.id,
             """🤖 Привет!
 
@@ -197,14 +230,14 @@ https://t.me/AiMagicCreateBot?start={user}
 поговорить со мной.
 
 🧠 Я готов к диалогу.""",
-            reply_markup=back()
+            back()
         )
         return
 
 
     if text == "🎥 Видео будущего":
 
-        bot.send_message(
+        send(
             message.chat.id,
             """🎥 Видео будущего
 
@@ -212,33 +245,33 @@ https://t.me/AiMagicCreateBot?start={user}
 генерация AI видео.
 
 Следи за обновлениями!""",
-            reply_markup=back()
+            back()
         )
         return
 
 
     if text == "🔉 Аудио с ИИ":
 
-        bot.send_message(
+        send(
             message.chat.id,
             """🔉 Аудио с ИИ
 
 🎧 Генерация аудио скоро
 появится в этом разделе.""",
-            reply_markup=back()
+            back()
         )
         return
 
 
     if text == "❓ Помощь":
 
-        bot.send_message(
+        send(
             message.chat.id,
             """❓ Помощь
 
 Если возникли вопросы —
 обратитесь в поддержку.""",
-            reply_markup=back()
+            back()
         )
         return
 
@@ -248,14 +281,17 @@ https://t.me/AiMagicCreateBot?start={user}
 
     if mode == "chat":
 
-        bot.send_message(
+        msg = bot.send_message(
             message.chat.id,
             "🧠 ИИ думает..."
         )
 
-        bot.send_message(
+        time.sleep(1)
+
+        bot.edit_message_text(
+            "🤖 Пока ИИ не подключён. Скоро добавим.",
             message.chat.id,
-            "🤖 Пока ИИ не подключён. Скоро добавим."
+            msg.message_id
         )
 
         return
@@ -263,14 +299,17 @@ https://t.me/AiMagicCreateBot?start={user}
 
     if mode == "image":
 
-        bot.send_message(
+        msg = bot.send_message(
             message.chat.id,
             "🎨 Генерирую изображение..."
         )
 
-        bot.send_message(
+        time.sleep(1)
+
+        bot.edit_message_text(
+            "🖼 Генерация скоро будет подключена.",
             message.chat.id,
-            "🖼 Генерация скоро будет подключена."
+            msg.message_id
         )
 
         return
