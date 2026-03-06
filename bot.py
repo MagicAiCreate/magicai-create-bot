@@ -6,10 +6,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# режимы пользователей
 user_modes = {}
 
-# база данных
+# база
 db = sqlite3.connect("database.db", check_same_thread=False)
 cursor = db.cursor()
 
@@ -26,7 +25,7 @@ referrer INTEGER
 db.commit()
 
 
-# регистрация пользователя
+# регистрация
 def register_user(user, ref=None):
 
     cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user.id,))
@@ -45,6 +44,7 @@ def register_user(user, ref=None):
         ref_exists = cursor.fetchone()
 
         if ref_exists:
+
             referrer = ref
 
             cursor.execute(
@@ -60,7 +60,7 @@ def register_user(user, ref=None):
     db.commit()
 
 
-# главное меню
+# меню
 def main_menu():
 
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -75,7 +75,7 @@ def main_menu():
     return keyboard
 
 
-# профиль клавиатура
+# профиль меню
 def profile_menu():
 
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -90,7 +90,7 @@ def profile_menu():
 
 
 # старт
-@bot.message_handler(commands=["start"])
+@bot.message_handler(commands=['start'])
 def start(message):
 
     ref = None
@@ -112,18 +112,30 @@ def start(message):
     )
 
 
-# обработка сообщений
 @bot.message_handler(func=lambda message: True)
 def handler(message):
 
     text = message.text
+    user_id = message.from_user.id
 
-    # профиль
+
+    if text == "🏠 Главное меню":
+
+        user_modes[user_id] = None
+
+        bot.send_message(
+            message.chat.id,
+            "🏠 Главное меню",
+            reply_markup=main_menu()
+        )
+        return
+
+
     if text == "👤 Профиль":
 
         cursor.execute(
             "SELECT tokens, requests FROM users WHERE user_id=?",
-            (message.from_user.id,)
+            (user_id,)
         )
 
         data = cursor.fetchone()
@@ -134,12 +146,12 @@ def handler(message):
         profile_text = f"""
 👤 Профиль
 
-🆔 ID: {message.from_user.id}
+🆔 ID: {user_id}
 🪙 Токены: {tokens}
 📊 Запросов: {requests}
 
 🔗 Ваша реферальная ссылка:
-https://t.me/AiMagicCreateBot?start={message.from_user.id}
+https://t.me/AiMagicCreateBot?start={user_id}
 """
 
         bot.send_message(
@@ -147,64 +159,31 @@ https://t.me/AiMagicCreateBot?start={message.from_user.id}
             profile_text,
             reply_markup=profile_menu()
         )
+        return
 
 
-    # главное меню
-    elif text == "🏠 Главное меню":
+    if text == "🧠 Твой умный собеседник":
 
-        user_modes[message.from_user.id] = None
-
-        bot.send_message(
-            message.chat.id,
-            "🏠 Главное меню",
-            reply_markup=main_menu()
-        )
-
-
-    # AI чат
-    elif text == "🧠 Твой умный собеседник":
-
-        user_modes[message.from_user.id] = "chat_ai"
+        user_modes[user_id] = "chat"
 
         bot.send_message(
             message.chat.id,
             """🤖 Привет!
 
-Я теперь твой умный собеседник 😊
+Я твой умный собеседник 😊  
+Можешь говорить со мной о чем угодно.
 
-Ты можешь поговорить со мной на любые темы.
-
-❓Задай любой вопрос  
-💡 Попроси совет  
-🧠 Обсуди любую идею
-
-Я постараюсь помочь!
+Задай любой вопрос.
 
 Чтобы выйти нажми:
 🏠 Главное меню"""
         )
+        return
 
 
-    # аудио
-    elif text == "🔉 Аудио с ИИ":
+    if text == "🥷 Убийца фотошопа":
 
-        keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-
-        keyboard.row("🎙️ ElevenLabs Voice")
-        keyboard.row("🎵 ElevenLabs Music")
-        keyboard.row("🏠 Главное меню")
-
-        bot.send_message(
-            message.chat.id,
-            "🎧 Раздел аудио ИИ",
-            reply_markup=keyboard
-        )
-
-
-    # убийца фотошопа
-    elif text == "🥷 Убийца фотошопа":
-
-        user_modes[message.from_user.id] = "image_ai"
+        user_modes[user_id] = "image"
 
         bot.send_message(
             message.chat.id,
@@ -212,52 +191,45 @@ https://t.me/AiMagicCreateBot?start={message.from_user.id}
 
 Привет! 🎨
 
-Я могу создать для тебя любую картинку.
+Напиши запрос для генерации картинки.
 
-✏️ Напиши текст —
-какую картинку ты хочешь сгенерировать.
-
-🖼 Или отправь изображение
-и напиши что на нём изменить.
-
-Например:
-"сделай ночь"
-"добавь огонь"
-"измени фон"
+Или отправь изображение и напиши,
+что изменить на нём.
 
 Чтобы выйти нажми:
 🏠 Главное меню"""
         )
+        return
 
 
-    # видео
-    elif text == "🎥 Видео будущего":
-
-        keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-
-        keyboard.row("🎬 Kling")
-        keyboard.row("🏠 Главное меню")
+    if text == "🔉 Аудио с ИИ":
 
         bot.send_message(
             message.chat.id,
-            "🎬 Раздел видео ИИ",
-            reply_markup=keyboard
+            "🎧 Раздел аудио пока в разработке",
+            reply_markup=main_menu()
         )
+        return
 
 
-    # помощь
-    elif text == "⁉️ Помощь":
-
-        keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-
-        keyboard.row("🚨 Служба поддержки")
-        keyboard.row("🏠 Главное меню")
+    if text == "🎥 Видео будущего":
 
         bot.send_message(
             message.chat.id,
-            "❓ Если возникли вопросы — напишите в поддержку",
-            reply_markup=keyboard
+            "🎬 Видео генерация скоро появится",
+            reply_markup=main_menu()
         )
+        return
+
+
+    if text == "⁉️ Помощь":
+
+        bot.send_message(
+            message.chat.id,
+            "🚨 Напишите в поддержку",
+            reply_markup=main_menu()
+        )
+        return
 
 
 bot.infinity_polling()
