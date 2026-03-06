@@ -165,7 +165,8 @@ def ask_gpt(user_id, text):
 
     return answer
 
-# генерация изображения по тексту
+
+# генерация изображения
 def generate_flux(prompt):
 
     url = "https://api.bfl.ml/v1/flux"
@@ -205,6 +206,7 @@ def edit_image(image_url, prompt):
     result = r.json()
 
     return result["image_url"]
+
 
 # удаление старого сообщения
 def clean(chat_id):
@@ -276,42 +278,22 @@ def start(message):
     )
 
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
+@bot.message_handler(content_types=['photo'])
+def photo_handler(message):
 
-    user = call.from_user.id
+    user = message.from_user.id
+    mode = user_modes.get(user)
 
-    if call.data == "buy_50":
+    if mode != "image":
+        return
 
-        bot.answer_callback_query(call.id)
+    photo = message.photo[-1].file_id
+    pending_edit[user] = photo
 
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + 50 WHERE user_id=?",
-            (user,)
-        )
-
-        db.commit()
-
-        bot.send_message(
-            call.message.chat.id,
-            "⭐ Вам начислено 50 токенов."
-        )
-
-    if call.data == "buy_150":
-
-        bot.answer_callback_query(call.id)
-
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + 150 WHERE user_id=?",
-            (user,)
-        )
-
-        db.commit()
-
-        bot.send_message(
-            call.message.chat.id,
-            "⭐ Вам начислено 150 токенов."
-        )
+    bot.send_message(
+        message.chat.id,
+        "Теперь напишите, что нужно изменить на данной картинке."
+    )
 
 
 @bot.message_handler(func=lambda message: True)
@@ -321,270 +303,37 @@ def handler(message):
     user = message.from_user.id
     mode = user_modes.get(user)
 
-    # эффект Таноса
-    if mode not in ["chat", "image", "audio", "video"]:
-        try:
-            bot.delete_message(message.chat.id, message.message_id)
-        except:
-            pass
-
-
-    if text == "⬅️ Назад":
-
-        user_modes[user] = None
-
-        send(
-            message.chat.id,
-            "🏠 Главное меню",
-            main_menu()
-        )
-        return
-
-
-    if text == "💰 Купить токены":
-
-        kb = telebot.types.InlineKeyboardMarkup()
-
-        kb.add(
-            telebot.types.InlineKeyboardButton(
-                "50 токенов ⭐50",
-                callback_data="buy_50"
-            )
-        )
-
-        kb.add(
-            telebot.types.InlineKeyboardButton(
-                "150 токенов ⭐120",
-                callback_data="buy_150"
-            )
-        )
-
-        bot.send_message(
-            message.chat.id,
-            "💳 Выберите пакет токенов:",
-            reply_markup=kb
-        )
-        return
-
-
-    if text == "👤 Профиль":
-
-        cursor.execute(
-            "SELECT tokens, requests FROM users WHERE user_id=?",
-            (user,)
-        )
-
-        tokens, requests_count = cursor.fetchone()
-
-        text_profile = f"""
-👤 Ваш профиль
-
-━━━━━━━━━━━━━━━
-
-🆔 ID: {user}
-
-🪙 Баланс токенов: {tokens}
-
-📊 Использовано запросов: {requests_count}
-
-━━━━━━━━━━━━━━━
-
-🔗 Ваша реферальная ссылка
-
-https://t.me/AiMagicCreateBot?start={user}
-
-💸 Приглашайте друзей и получайте
-+15 токенов за каждого нового пользователя.
-"""
-
-        send(
-            message.chat.id,
-            text_profile,
-            back()
-        )
-        return
-
-
-    if text == "🥷 Убийца фотошопа":
-
-        user_modes[user] = "image"
-
-        send(
-            message.chat.id,
-            """🥷 Убийца фотошопа
-
-Создавайте изображения по текстовому описанию.
-
-Например:
-• Машина, деньги на капоте, вечер, дождь, Москва-Сити, формат 9:16.
-
-Или загрузите фото и укажите, что изменить:
-• удалить объект
-• заменить фон
-• улучшить качество
-• изменить стиль
-• добавить новый элемент
-
-Обработка занимает несколько секунд.
-
-Тариф: ⚡️25 токенов""",
-            back()
-        )
-        return
-
-
-    if text == "🧠 Твой умный собеседник":
-
-        user_modes[user] = "chat"
-
-        send(
-            message.chat.id,
-            """🧠 Твой умный собеседник!
-
-Привет, хочешь просто поговорить или что-то узнать? Пиши, отвечу)""",
-            back()
-        )
-        return
-
-
-    if text == "🎥 Видео будущего":
-
-        user_modes[user] = "video"
-
-        send(
-            message.chat.id,
-            """🎥 Генерация видео
-
-Скоро здесь появится
-создание AI видео.""",
-            back()
-        )
-        return
-
-
-    if text == "🔉 Аудио с ИИ":
-
-        user_modes[user] = "audio"
-
-        send(
-            message.chat.id,
-            """🔉 Генерация аудио
-
-Функция скоро появится.""",
-            back()
-        )
-        return
-
-
-    if text == "❓ Помощь":
-
-        send(
-            message.chat.id,
-            """❓ Помощь
-
-Если возникли вопросы —
-напишите в поддержку.""",
-            back()
-        )
-        return
-
-
-    if mode == "chat":
-
-        msg = bot.send_message(
-            message.chat.id,
-            "⚡ Запрос получен..."
-        )
-
-        time.sleep(0.7)
-
-        bot.edit_message_text(
-            "🧠 Анализирую данные...",
-            message.chat.id,
-            msg.message_id
-        )
-
-        time.sleep(0.7)
-
-        bot.edit_message_text(
-            "🤖 Генерирую ответ...",
-            message.chat.id,
-            msg.message_id
-        )
-
-        answer = ask_gpt(user, text)
-
-        bot.edit_message_text(
-            f"✨ {answer}",
-            message.chat.id,
-            msg.message_id
-        )
-
-        return
-
-
     if mode == "image":
+
+        if user in pending_edit:
+
+            photo_id = pending_edit[user]
+            del pending_edit[user]
+
+            msg = bot.send_message(
+                message.chat.id,
+                "🎨 Обрабатываю изображение..."
+            )
+
+            file_info = bot.get_file(photo_id)
+            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+
+            result = edit_image(file_url, text)
+
+            bot.send_photo(message.chat.id, result)
+
+            return
 
         msg = bot.send_message(
             message.chat.id,
             "🎨 Генерирую изображение..."
         )
 
-        time.sleep(1)
-
-        bot.edit_message_text(
-            "🖼 Генерация скоро будет подключена.",
-            message.chat.id,
-            msg.message_id
-        )
-
-        return
-
-@bot.message_handler(content_types=['photo'])
-def photo_handler(message):
-
-    user = message.from_user.id
-    mode = user_modes.get(user)
-
-    if mode == "image":
-
-    if user in pending_edit:
-
-        photo_id = pending_edit[user]
-        del pending_edit[user]
-
-        msg = bot.send_message(
-            message.chat.id,
-            "🎨 Обрабатываю изображение..."
-        )
-
-        file_info = bot.get_file(photo_id)
-        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-
-        result = edit_image(file_url, text)
+        result = generate_flux(text)
 
         bot.send_photo(message.chat.id, result)
 
         return
 
-    msg = bot.send_message(
-        message.chat.id,
-        "🎨 Генерирую изображение..."
-    )
-
-    result = generate_flux(text)
-
-    bot.send_photo(message.chat.id, result)
-
-    return
-
-    photo = message.photo[-1].file_id
-
-    pending_edit[user] = photo
-
-    bot.send_message(
-        message.chat.id,
-        "Теперь напишите, что нужно изменить на данной картинке."
-    )
 
 bot.infinity_polling()
