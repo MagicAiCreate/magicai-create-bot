@@ -30,7 +30,13 @@ def main_menu():
 def start(message):
 
     chat_mode[message.chat.id] = False
-    conversation_history[message.chat.id] = []
+
+    conversation_history[message.chat.id] = [
+        {
+            "role": "system",
+            "content": "Ты дружелюбный AI собеседник. Ты всегда помнишь предыдущие сообщения диалога и отвечаешь с учётом всей истории разговора."
+        }
+    ]
 
     bot.send_message(
         message.chat.id,
@@ -85,7 +91,13 @@ def handle(message):
     if text == "🚀 Начнем":
 
         chat_mode[chat_id] = True
-        conversation_history[chat_id] = []
+
+        conversation_history[chat_id] = [
+            {
+                "role": "system",
+                "content": "Ты дружелюбный AI собеседник. Ты помнишь всю историю диалога."
+            }
+        ]
 
         bot.send_message(chat_id, "Привет :)")
         return
@@ -144,7 +156,6 @@ def handle(message):
     if text == "🏠 Главное меню":
 
         chat_mode[chat_id] = False
-        conversation_history[chat_id] = []
 
         bot.send_message(
             chat_id,
@@ -158,9 +169,6 @@ def handle(message):
     if chat_mode.get(chat_id) == True:
 
         try:
-
-            if chat_id not in conversation_history:
-                conversation_history[chat_id] = []
 
             conversation_history[chat_id].append(
                 {"role": "user", "content": text}
@@ -177,7 +185,6 @@ def handle(message):
                 {"role": "assistant", "content": answer}
             )
 
-# ограничиваем память до последних 20 сообщений
             conversation_history[chat_id] = conversation_history[chat_id][-20:]
 
             bot.send_message(chat_id, answer)
