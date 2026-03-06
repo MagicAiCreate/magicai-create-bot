@@ -13,6 +13,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 user_modes = {}
 last_messages = {}
+generation_lock = {}
 
 # база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
@@ -38,7 +39,6 @@ history TEXT
 db.commit()
 
 
-# регистрация пользователя
 def register_user(user, ref=None):
 
     cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user.id,))
@@ -73,7 +73,6 @@ def register_user(user, ref=None):
     db.commit()
 
 
-# память GPT
 def get_memory(user_id):
 
     cursor.execute("SELECT history FROM memory WHERE user_id=?", (user_id,))
@@ -107,7 +106,6 @@ def save_memory(user_id, history):
     db.commit()
 
 
-# GPT функция
 def ask_gpt(user_id, text):
 
     cursor.execute(
@@ -164,7 +162,6 @@ def ask_gpt(user_id, text):
     return answer
 
 
-# Flux генерация
 def generate_flux(prompt):
 
     headers = {
@@ -176,7 +173,10 @@ def generate_flux(prompt):
         "version": "black-forest-labs/flux-schnell",
         "input": {
             "prompt": prompt,
-            "aspect_ratio": "9:16"
+            "aspect_ratio": "9:16",
+            "num_outputs": 1,
+            "guidance_scale": 3.5,
+            "num_inference_steps": 28
         }
     }
 
@@ -207,7 +207,6 @@ def generate_flux(prompt):
         time.sleep(1)
 
 
-# удаление старого сообщения
 def clean(chat_id):
 
     if chat_id in last_messages:
@@ -218,7 +217,6 @@ def clean(chat_id):
             pass
 
 
-# отправка нового сообщения
 def send(chat_id, text, keyboard=None):
 
     clean(chat_id)
@@ -232,7 +230,6 @@ def send(chat_id, text, keyboard=None):
     last_messages[chat_id] = msg.message_id
 
 
-# главное меню
 def main_menu():
 
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -245,7 +242,6 @@ def main_menu():
     return kb
 
 
-# кнопка назад
 def back():
 
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -303,15 +299,6 @@ def handler(message):
 Например:
 • Машина, деньги на капоте, вечер, дождь, Москва-Сити, формат 9:16.
 
-Или загрузите фото и укажите, что изменить:
-• удалить объект
-• заменить фон
-• улучшить качество
-• изменить стиль
-• добавить новый элемент
-
-Обработка занимает несколько секунд.
-
 Тариф: ⚡️25 токенов""",
             back()
         )
@@ -319,6 +306,15 @@ def handler(message):
 
 
     if mode == "image":
+
+        if generation_lock.get(user):
+            bot.send_message(
+                message.chat.id,
+                "⏳ Подождите завершения прошлой генерации."
+            )
+            return
+
+        generation_lock[user] = True
 
         cursor.execute(
             "SELECT tokens FROM users WHERE user_id=?",
@@ -331,8 +327,10 @@ def handler(message):
 
             bot.send_message(
                 message.chat.id,
-                "❌ Недостаточно токенов. Нужно 25."
+                "❌ Недостаточно токенов."
             )
+
+            generation_lock[user] = False
             return
 
 
@@ -367,6 +365,8 @@ def handler(message):
                 message.chat.id,
                 msg.message_id
             )
+
+        generation_lock[user] = False
 
         return
 
