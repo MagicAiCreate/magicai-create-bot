@@ -141,7 +141,42 @@ def handler(message):
         except:
             pass
 
-    if text == "👤 Профиль":
+    elif text == "👤 Профиль":
+
+    cursor.execute(
+        "SELECT tokens, requests FROM users WHERE user_id=?",
+        (message.from_user.id,)
+    )
+
+    data = cursor.fetchone()
+
+    tokens = data[0]
+    requests = data[1]
+
+    profile_text = f"""
+👤 Профиль
+
+ID: {message.from_user.id}
+Токены: {tokens}
+Запросов: {requests}
+
+Ваша реферальная ссылка:
+https://t.me/AiMagicCreateBot?start={message.from_user.id}
+"""
+
+    profile_keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+    profile_keyboard.row("💰 Баланс")
+    profile_keyboard.row("📊 Мои запросы")
+    profile_keyboard.row("👥 Рефералы")
+    profile_keyboard.row("🪙 Купить токены")
+    profile_keyboard.row("🏠 Главное меню")
+
+    bot.send_message(
+        message.chat.id,
+        profile_text,
+        reply_markup=profile_keyboard
+    )
 
         data = get_user(chat_id)
 
