@@ -414,6 +414,33 @@ def size_keyboard():
     return kb
 
 
+def payment_method_keyboard():
+
+    kb = telebot.types.InlineKeyboardMarkup(row_width=2)
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "⭐ TelegramStars",
+            callback_data="pay_stars"
+        ),
+        telebot.types.InlineKeyboardButton(
+            "💰 CryptoBot",
+            callback_data="pay_crypto"
+        )
+    )
+
+    kb.row(
+        telebot.types.InlineKeyboardButton(" ", callback_data="empty_left"),
+        telebot.types.InlineKeyboardButton(
+            "💳 Оплата картой",
+            callback_data="pay_card"
+        ),
+        telebot.types.InlineKeyboardButton(" ", callback_data="empty_right")
+    )
+
+    return kb
+
+
 def build_result_caption(prompt, image_url, spent, remaining):
 
     safe_prompt = html.escape(prompt)
@@ -623,6 +650,55 @@ def pre_checkout_query(query):
 def callback(call):
 
     user = call.from_user.id
+
+    if call.data in ["empty_left", "empty_right"]:
+        bot.answer_callback_query(call.id)
+        return
+
+    if call.data == "pay_stars":
+
+        kb = telebot.types.InlineKeyboardMarkup()
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "💎 250 токенов — стандарт ⭐349",
+                callback_data="buy_250"
+            )
+        )
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "🔥 500 токенов — популярный ⭐649",
+                callback_data="buy_500"
+            )
+        )
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "👑 1000 токенов — максимум ⭐1099",
+                callback_data="buy_1000"
+            )
+        )
+
+        bot.edit_message_text(
+            "💳 Выберите пакет токенов\n\n1 изображение = 25 💎",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=kb
+        )
+        return
+
+    if call.data == "pay_crypto":
+
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "💰 Оплата через CryptoBot скоро будет доступна.")
+        return
+
+    if call.data == "pay_card":
+
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "💳 Оплата картой скоро будет доступна.")
+        return
 
     if call.data == "buy_250":
 
@@ -965,33 +1041,10 @@ def handler(message):
 
     if text == "💰 Купить токены":
 
-        kb = telebot.types.InlineKeyboardMarkup()
-
-        kb.add(
-            telebot.types.InlineKeyboardButton(
-                "💎 250 токенов — стандарт ⭐349",
-                callback_data="buy_250"
-            )
-        )
-
-        kb.add(
-            telebot.types.InlineKeyboardButton(
-                "🔥 500 токенов — популярный ⭐649",
-                callback_data="buy_500"
-            )
-        )
-
-        kb.add(
-            telebot.types.InlineKeyboardButton(
-                "👑 1000 токенов — максимум ⭐1099",
-                callback_data="buy_1000"
-            )
-        )
-
         bot.send_message(
             message.chat.id,
-            "💳 Выберите пакет токенов\n\n1 изображение = 25 💎",
-            reply_markup=kb
+            "Выберите способ оплаты:",
+            reply_markup=payment_method_keyboard()
         )
         return
 
