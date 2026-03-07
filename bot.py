@@ -355,7 +355,7 @@ def result_keyboard(user_id):
 
     kb.add(
         telebot.types.InlineKeyboardButton(
-            "⚡ Доработать изображение",
+            "💎 Доработать изображение",
             callback_data=f"rework_{user_id}"
         )
     )
@@ -385,8 +385,8 @@ def build_result_caption(prompt, image_url, spent, remaining):
         f"Ваш запрос: {safe_prompt}\n\n"
         f"Качество: 4К\n"
         f"Модель: Убийца Photoshop\n\n"
-        f"Списано: ⚡ {spent}\n"
-        f"Осталось: ⚡ {remaining}"
+        f"Списано: 💎 {spent}\n"
+        f"Осталось: 💎 {remaining}"
     )
 
 
@@ -460,42 +460,70 @@ def start(message):
     )
 
 
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def pre_checkout_query(query):
+
+    bot.answer_pre_checkout_query(query.id, ok=True)
+
+
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
 
     user = call.from_user.id
 
-    if call.data == "buy_50":
+    if call.data == "buy_250":
+
+        prices = [telebot.types.LabeledPrice("250 tokens", 349)]
+
+        bot.send_invoice(
+            call.message.chat.id,
+            title="💎 250 токенов",
+            description="Пакет стандарт",
+            invoice_payload="buy_250",
+            provider_token="",
+            currency="XTR",
+            prices=prices,
+            start_parameter="buytokens250"
+        )
 
         bot.answer_callback_query(call.id)
+        return
 
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + 50 WHERE user_id=?",
-            (user,)
-        )
+    if call.data == "buy_500":
 
-        db.commit()
+        prices = [telebot.types.LabeledPrice("500 tokens", 649)]
 
-        bot.send_message(
+        bot.send_invoice(
             call.message.chat.id,
-            "⭐ Вам начислено 50 токенов."
+            title="🔥 500 токенов",
+            description="Популярный пакет",
+            invoice_payload="buy_500",
+            provider_token="",
+            currency="XTR",
+            prices=prices,
+            start_parameter="buytokens500"
         )
-
-    if call.data == "buy_150":
 
         bot.answer_callback_query(call.id)
+        return
 
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + 150 WHERE user_id=?",
-            (user,)
-        )
+    if call.data == "buy_1000":
 
-        db.commit()
+        prices = [telebot.types.LabeledPrice("1000 tokens", 1099)]
 
-        bot.send_message(
+        bot.send_invoice(
             call.message.chat.id,
-            "⭐ Вам начислено 150 токенов."
+            title="👑 1000 токенов",
+            description="Максимальный пакет",
+            invoice_payload="buy_1000",
+            provider_token="",
+            currency="XTR",
+            prices=prices,
+            start_parameter="buytokens1000"
         )
+
+        bot.answer_callback_query(call.id)
+        return
 
     if call.data.startswith("rework_"):
 
@@ -574,7 +602,7 @@ def callback(call):
                     "✅ Фото получено",
                     "🧠 Анализирую изменения...",
                     "🎨 Применяю правки...",
-                    "⚡ Почти закончил..."
+                    "💎 Почти закончил..."
                 ]
             )
 
@@ -632,7 +660,7 @@ def callback(call):
                 "✅ Запрос принят",
                 "🧠 Улучшаю запрос...",
                 "🎨 Начинается генерация...",
-                "⚡ Почти закончил..."
+                "💎 Почти закончил..."
             ]
         )
 
@@ -672,6 +700,33 @@ def callback(call):
 
         generation_lock[user] = False
         return
+
+
+@bot.message_handler(content_types=['successful_payment'])
+def successful_payment(message):
+
+    payload = message.successful_payment.invoice_payload
+    user = message.from_user.id
+
+    if payload == "buy_250":
+        tokens_add = 250
+    elif payload == "buy_500":
+        tokens_add = 500
+    elif payload == "buy_1000":
+        tokens_add = 1000
+    else:
+        return
+
+    cursor.execute(
+        "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
+        (tokens_add, user)
+    )
+    db.commit()
+
+    bot.send_message(
+        message.chat.id,
+        f"✨ Оплата прошла успешно\n\nНачислено: 💎 {tokens_add}"
+    )
 
 
 @bot.message_handler(content_types=['photo'])
@@ -740,21 +795,28 @@ def handler(message):
 
         kb.add(
             telebot.types.InlineKeyboardButton(
-                "50 токенов ⭐50",
-                callback_data="buy_50"
+                "💎 250 токенов — стандарт ⭐349",
+                callback_data="buy_250"
             )
         )
 
         kb.add(
             telebot.types.InlineKeyboardButton(
-                "150 токенов ⭐120",
-                callback_data="buy_150"
+                "🔥 500 токенов — популярный ⭐649",
+                callback_data="buy_500"
+            )
+        )
+
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "👑 1000 токенов — максимум ⭐1099",
+                callback_data="buy_1000"
             )
         )
 
         bot.send_message(
             message.chat.id,
-            "💳 Выберите пакет токенов:",
+            "💳 Выберите пакет токенов\n\n1 изображение = 25 💎",
             reply_markup=kb
         )
         return
@@ -781,7 +843,7 @@ def handler(message):
 
 🆔 ID: {user}
 
-🪙 Баланс токенов: {tokens}
+💎 Баланс токенов: {tokens}
 
 📊 Использовано запросов: {requests_count}
 
@@ -792,7 +854,7 @@ def handler(message):
 https://t.me/AiMagicCreateBot?start={user}
 
 💸 Приглашайте друзей и получайте
-+15 токенов за каждого нового пользователя.
++15 💎 за каждого нового пользователя.
 """
 
         send(
@@ -825,7 +887,7 @@ https://t.me/AiMagicCreateBot?start={user}
 
 Обработка занимает несколько секунд.
 
-Тариф: ⚡️25 токенов""",
+Тариф: 💎25 токенов""",
             back()
         )
         return
@@ -891,7 +953,7 @@ https://t.me/AiMagicCreateBot?start={user}
 
         msg = bot.send_message(
             message.chat.id,
-            "⚡ Запрос получен..."
+            "💎 Запрос получен..."
         )
 
         time.sleep(0.7)
@@ -938,7 +1000,7 @@ https://t.me/AiMagicCreateBot?start={user}
         if tokens < 25:
             bot.send_message(
                 message.chat.id,
-                "❌ Недостаточно токенов. Нужно 25."
+                "❌ Недостаточно токенов. Нужно 25 💎."
             )
             return
 
