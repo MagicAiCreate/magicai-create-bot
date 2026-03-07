@@ -4,6 +4,7 @@ import os
 import time
 import requests
 import json
+import html
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
@@ -16,6 +17,7 @@ last_messages = {}
 
 pending_edit = {}
 generation_lock = {}
+last_generated = {}
 
 # база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
@@ -264,6 +266,8 @@ def generate_flux(prompt):
             output = result.get("output")
             if isinstance(output, str):
                 return output
+            if isinstance(output, list) and len(output) > 0:
+                return output[0]
             return None
 
         if status in ["failed", "canceled"]:
@@ -318,10 +322,58 @@ def edit_image(image_url, prompt):
             output = result.get("output")
             if isinstance(output, str):
                 return output
+            if isinstance(output, list) and len(output) > 0:
+                return output[0]
             return None
 
         if status in ["failed", "canceled"]:
             return None
+
+
+def generation_status(chat_id, steps):
+
+    msg = bot.send_message(chat_id, steps[0])
+
+    for step in steps[1:]:
+        time.sleep(0.9)
+        try:
+            bot.edit_message_text(
+                step,
+                chat_id,
+                msg.message_id
+            )
+        except:
+            pass
+
+    return msg
+
+
+def result_keyboard(user_id):
+
+    kb = telebot.types.InlineKeyboardMarkup()
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "⚡ Доработать изображение",
+            callback_data=f"rework_{user_id}"
+        )
+    )
+
+    return kb
+
+
+def build_result_caption(prompt, image_url, spent, remaining):
+
+    safe_prompt = html.escape(prompt)
+
+    return (
+        f'Вот <a href="{image_url}">прямая ссылка</a> на качественную версию.\n\n'
+        f"Ваш запрос: {safe_prompt}\n\n"
+        f"Качество: 4К\n"
+        f"Модель: Убийца Photoshop\n\n"
+        f"Списано: ⚡ {spent}\n"
+        f"Осталось: ⚡ {remaining}"
+    )
 
 
 # удаление старого сообщения
@@ -431,6 +483,37 @@ def callback(call):
             "⭐ Вам начислено 150 токенов."
         )
 
+    if call.data.startswith("rework_"):
+
+        target_user = int(call.data.split("_")[1])
+
+        if user != target_user:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Эта кнопка не для вас."
+            )
+            return
+
+        if target_user not in last_generated:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Изображение не найдено."
+            )
+            return
+
+        pending_edit[target_user] = {
+            "type": "generated",
+            "value": last_generated[target_user]
+        }
+
+        bot.answer_callback_query(call.id)
+
+        bot.send_message(
+            call.message.chat.id,
+            "Напишите, что нужно доработать на изображении."
+        )
+        return
+
 
 @bot.message_handler(content_types=['photo'])
 def photo_handler(message):
@@ -448,7 +531,10 @@ def photo_handler(message):
         return
 
     photo = message.photo[-1].file_id
-    pending_edit[user] = photo
+    pending_edit[user] = {
+        "type": "telegram",
+        "value": photo
+    }
 
     bot.send_message(
         message.chat.id,
@@ -699,16 +785,24 @@ https://t.me/AiMagicCreateBot?start={user}
 
         if user in pending_edit:
 
-            photo_id = pending_edit[user]
+            edit_source = pending_edit[user]
             del pending_edit[user]
 
-            msg = bot.send_message(
+            status_msg = generation_status(
                 message.chat.id,
-                "🎨 Обрабатываю изображение..."
+                [
+                    "✅ Фото получено",
+                    "🧠 Анализирую изменения...",
+                    "🎨 Применяю правки...",
+                    "⚡ Почти закончил..."
+                ]
             )
 
-            file_info = bot.get_file(photo_id)
-            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+            if isinstance(edit_source, dict) and edit_source["type"] == "telegram":
+                file_info = bot.get_file(edit_source["value"])
+                file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+            else:
+                file_url = edit_source["value"]
 
             result = edit_image(file_url, text)
 
@@ -719,13 +813,28 @@ https://t.me/AiMagicCreateBot?start={user}
                 )
                 db.commit()
 
-                bot.delete_message(message.chat.id, msg.message_id)
-                bot.send_photo(message.chat.id, result)
+                remaining = tokens - 25
+                last_generated[user] = result
+
+                try:
+                    bot.delete_message(message.chat.id, status_msg.message_id)
+                except:
+                    pass
+
+                caption = build_result_caption(text, result, 25, remaining)
+
+                bot.send_photo(
+                    message.chat.id,
+                    result,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=result_keyboard(user)
+                )
             else:
                 bot.edit_message_text(
                     "❌ Ошибка при обработке изображения.",
                     message.chat.id,
-                    msg.message_id
+                    status_msg.message_id
                 )
 
             return
@@ -739,9 +848,14 @@ https://t.me/AiMagicCreateBot?start={user}
 
         generation_lock[user] = True
 
-        msg = bot.send_message(
+        status_msg = generation_status(
             message.chat.id,
-            "🎨 Генерирую изображение..."
+            [
+                "✅ Запрос принят",
+                "🧠 Улучшаю запрос...",
+                "🎨 Начинается генерация...",
+                "⚡ Почти закончил..."
+            ]
         )
 
         better_prompt = improve_prompt(text)
@@ -750,17 +864,32 @@ https://t.me/AiMagicCreateBot?start={user}
         if result:
             cursor.execute(
                 "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                    (user,)
+                (user,)
             )
             db.commit()
 
-            bot.delete_message(message.chat.id, msg.message_id)
-            bot.send_photo(message.chat.id, result)
+            remaining = tokens - 25
+            last_generated[user] = result
+
+            try:
+                bot.delete_message(message.chat.id, status_msg.message_id)
+            except:
+                pass
+
+            caption = build_result_caption(text, result, 25, remaining)
+
+            bot.send_photo(
+                message.chat.id,
+                result,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=result_keyboard(user)
+            )
         else:
             bot.edit_message_text(
                 "❌ Ошибка генерации изображения.",
                 message.chat.id,
-                msg.message_id
+                status_msg.message_id
             )
 
         generation_lock[user] = False
