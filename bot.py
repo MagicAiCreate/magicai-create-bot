@@ -5,11 +5,13 @@ import time
 import requests
 import json
 import html
+import threading
 from datetime import datetime
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
 ADMIN_ID = 816154985
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -19,6 +21,7 @@ last_messages = {}
 
 pending_edit = {}
 pending_size = {}
+pending_crypto_asset = {}
 generation_lock = {}
 last_generated = {}
 
@@ -54,6 +57,19 @@ created_at TEXT DEFAULT CURRENT_TIMESTAMP
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS crypto_payments(
+invoice_id TEXT PRIMARY KEY,
+user_id INTEGER,
+asset TEXT,
+amount REAL,
+tokens INTEGER,
+status TEXT DEFAULT 'pending',
+payload TEXT,
+created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
 try:
     cursor.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
 except:
@@ -68,6 +84,10 @@ cursor.execute("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at
 cursor.execute("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE last_seen IS NULL")
 
 db.commit()
+
+
+def apply_bonus(tokens_amount):
+    return int(tokens_amount * 1.1)
 
 
 # регистрация пользователя
@@ -424,21 +444,124 @@ def payment_method_keyboard():
             callback_data="pay_stars"
         ),
         telebot.types.InlineKeyboardButton(
-            "💰 CryptoBot",
+            "💰 Crypto",
             callback_data="pay_crypto"
         )
     )
 
-    kb.row(
-        telebot.types.InlineKeyboardButton(" ", callback_data="empty_left"),
+    kb.add(
         telebot.types.InlineKeyboardButton(
             "💳 Оплата картой",
             callback_data="pay_card"
-        ),
-        telebot.types.InlineKeyboardButton(" ", callback_data="empty_right")
+        )
     )
 
     return kb
+
+
+def crypto_keyboard():
+
+    kb = telebot.types.InlineKeyboardMarkup()
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "USDT (TRC20)",
+            callback_data="crypto_asset_USDT"
+        )
+    )
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "TON",
+            callback_data="crypto_asset_TON"
+        )
+    )
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "BTC",
+            callback_data="crypto_asset_BTC"
+        )
+    )
+
+    return kb
+
+
+def crypto_packages_keyboard(asset):
+
+    kb = telebot.types.InlineKeyboardMarkup()
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            f"💎 250 токенов — 5 {asset}",
+            callback_data=f"crypto_buy_{asset}_250"
+        )
+    )
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            f"🔥 500 токенов — 9 {asset}",
+            callback_data=f"crypto_buy_{asset}_500"
+        )
+    )
+
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            f"👑 1000 токенов — 15 {asset}",
+            callback_data=f"crypto_buy_{asset}_1000"
+        )
+    )
+
+    return kb
+
+
+def create_crypto_invoice(user_id, asset, amount, tokens):
+
+    if not CRYPTOBOT_TOKEN:
+        return None
+
+    url = "https://pay.crypt.bot/api/createInvoice"
+
+    headers = {
+        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN
+    }
+
+    payload = {
+        "asset": asset,
+        "amount": str(amount),
+        "description": f"{tokens} tokens",
+        "hidden_message": f"user:{user_id}",
+        "payload": f"{user_id}_{asset}_{tokens}"
+    }
+
+    r = requests.post(url, headers=headers, json=payload, timeout=30)
+    data = r.json()
+
+    if not data.get("ok"):
+        return None
+
+    invoice = data["result"]
+
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO crypto_payments
+        (invoice_id,user_id,asset,amount,tokens,status,payload)
+        VALUES(?,?,?,?,?,?,?)
+        """,
+        (
+            str(invoice["invoice_id"]),
+            user_id,
+            asset,
+            amount,
+            tokens,
+            "pending",
+            payload["payload"]
+        )
+    )
+
+    db.commit()
+
+    return invoice["pay_url"], str(invoice["invoice_id"])
 
 
 def build_result_caption(prompt, image_url, spent, remaining):
@@ -474,6 +597,12 @@ def admin_stats():
     cursor.execute("SELECT COALESCE(SUM(tokens),0) FROM purchases WHERE DATE(created_at)=DATE('now')")
     tokens_today = cursor.fetchone()[0] or 0
 
+    cursor.execute("SELECT COUNT(*) FROM crypto_payments WHERE DATE(created_at)=DATE('now') AND status='paid'")
+    crypto_paid_today = cursor.fetchone()[0] or 0
+
+    cursor.execute("SELECT COALESCE(SUM(amount),0) FROM crypto_payments WHERE DATE(created_at)=DATE('now') AND status='paid'")
+    crypto_amount_today = cursor.fetchone()[0] or 0
+
     return f"""
 📊 Статистика бота
 
@@ -486,6 +615,10 @@ def admin_stats():
 ⭐ Заработано сегодня: {stars_today}
 
 💎 Куплено токенов сегодня: {tokens_today}
+
+💰 Крипто оплат сегодня: {crypto_paid_today}
+
+💵 Крипто сумма сегодня: {crypto_amount_today}
 """
 
 
@@ -640,6 +773,79 @@ def leopold_give(message):
         )
 
 
+def check_crypto_payments():
+
+    if not CRYPTOBOT_TOKEN:
+        return
+
+    url = "https://pay.crypt.bot/api/getInvoices"
+
+    headers = {
+        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN
+    }
+
+    r = requests.get(url, headers=headers, timeout=30)
+
+    data = r.json()
+
+    if not data.get("ok"):
+        return
+
+    invoices = data["result"]["items"]
+
+    for inv in invoices:
+
+        if inv["status"] != "paid":
+            continue
+
+        invoice_id = str(inv["invoice_id"])
+
+        cursor.execute(
+            "SELECT user_id,tokens,status FROM crypto_payments WHERE invoice_id=?",
+            (invoice_id,)
+        )
+
+        row = cursor.fetchone()
+
+        if not row:
+            continue
+
+        if row[2] == "paid":
+            continue
+
+        user_id = row[0]
+        base_tokens = row[1]
+        final_tokens = apply_bonus(base_tokens)
+
+        cursor.execute(
+            "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
+            (final_tokens, user_id)
+        )
+
+        cursor.execute(
+            "UPDATE crypto_payments SET status='paid' WHERE invoice_id=?",
+            (invoice_id,)
+        )
+
+        cursor.execute(
+            """
+            INSERT INTO purchases (user_id, stars, tokens, payload)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, 0, final_tokens, f"crypto_paid_{invoice_id}")
+        )
+
+        db.commit()
+
+        try:
+            bot.send_message(
+                user_id,
+                f"💰 Крипто оплата получена\n\nНачислено 💎 {final_tokens}"
+            )
+        except:
+            pass
+
+
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def pre_checkout_query(query):
 
@@ -650,10 +856,6 @@ def pre_checkout_query(query):
 def callback(call):
 
     user = call.from_user.id
-
-    if call.data in ["empty_left", "empty_right"]:
-        bot.answer_callback_query(call.id)
-        return
 
     if call.data == "pay_stars":
 
@@ -690,8 +892,93 @@ def callback(call):
 
     if call.data == "pay_crypto":
 
+        bot.edit_message_text(
+            "💰 Выберите криптовалюту:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=crypto_keyboard()
+        )
+        return
+
+    if call.data == "crypto_asset_USDT":
+        pending_crypto_asset[user] = "USDT"
+        bot.edit_message_text(
+            "💰 Выберите пакет для оплаты в USDT:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=crypto_packages_keyboard("USDT")
+        )
+        return
+
+    if call.data == "crypto_asset_TON":
+        pending_crypto_asset[user] = "TON"
+        bot.edit_message_text(
+            "💰 Выберите пакет для оплаты в TON:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=crypto_packages_keyboard("TON")
+        )
+        return
+
+    if call.data == "crypto_asset_BTC":
+        pending_crypto_asset[user] = "BTC"
+        bot.edit_message_text(
+            "💰 Выберите пакет для оплаты в BTC:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=crypto_packages_keyboard("BTC")
+        )
+        return
+
+    if call.data.startswith("crypto_buy_"):
+
+        parts = call.data.split("_")
+        asset = parts[2]
+        token_pack = parts[3]
+
+        if token_pack == "250":
+            amount = 5
+            tokens = 250
+        elif token_pack == "500":
+            amount = 9
+            tokens = 500
+        elif token_pack == "1000":
+            amount = 15
+            tokens = 1000
+        else:
+            bot.answer_callback_query(call.id, "❌ Пакет не найден.")
+            return
+
+        pay = create_crypto_invoice(user, asset, amount, tokens)
+
+        if not pay:
+            bot.answer_callback_query(call.id, "Ошибка создания счета")
+            return
+
+        pay_url, invoice_id = pay
+
+        kb = telebot.types.InlineKeyboardMarkup()
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                "💳 ОПЛАТИТЬ",
+                url=pay_url
+            )
+        )
+
+        bonus_tokens = apply_bonus(tokens)
+
+        bot.send_message(
+            call.message.chat.id,
+            f"💰 Счет создан\n\n"
+            f"Валюта: {asset}\n"
+            f"Сумма: {amount} {asset}\n"
+            f"Пакет: {tokens} 💎\n"
+            f"С бонусом: {bonus_tokens} 💎\n\n"
+            f"После оплаты токены начислятся автоматически.",
+            reply_markup=kb
+        )
+
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💰 Оплата через CryptoBot скоро будет доступна.")
         return
 
     if call.data == "pay_card":
@@ -942,15 +1229,15 @@ def successful_payment(message):
     user = message.from_user.id
 
     if payload == "buy_250":
-        tokens_add = 250
+        tokens_add = apply_bonus(250)
         stars_paid = 349
 
     elif payload == "buy_500":
-        tokens_add = 500
+        tokens_add = apply_bonus(500)
         stars_paid = 649
 
     elif payload == "buy_1000":
-        tokens_add = 1000
+        tokens_add = apply_bonus(1000)
         stars_paid = 1099
 
     else:
@@ -1266,5 +1553,19 @@ https://t.me/AiMagicCreateBot?start={user}
 
         return
 
+
+def crypto_loop():
+
+    while True:
+
+        try:
+            check_crypto_payments()
+        except:
+            pass
+
+        time.sleep(20)
+
+
+threading.Thread(target=crypto_loop, daemon=True).start()
 
 bot.infinity_polling()
