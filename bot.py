@@ -217,7 +217,7 @@ def improve_prompt(prompt):
     return result["choices"][0]["message"]["content"]
 
 
-# генерация изображения по тексту через Replicate FLUX schnell
+# генерация изображения через Replicate nano-banana-pro
 def generate_flux(prompt):
 
     url = "https://api.replicate.com/v1/predictions"
@@ -228,14 +228,14 @@ def generate_flux(prompt):
     }
 
     data = {
-        "version": "c846a69991daf4c0e5d016514849d14ee5b2e6846ce6b9d6f21369e564cfe51e",
+        "version": "fdf4cb96614227f3021c42f35bc92d4fd2e3e1ae9f50ca4004ffa8da64bf8dca",
         "input": {
             "prompt": prompt,
-            "aspect_ratio": "1:1",
-            "num_outputs": 1,
-            "num_inference_steps": 32,
-            "guidance_scale": 7.5,
-            "prompt_upsampling": True
+            "aspect_ratio": "9:16",
+            "resolution": "2K",
+            "output_format": "jpg",
+            "safety_filter_level": "block_only_high",
+            "allow_fallback_model": True
         }
     }
 
@@ -249,7 +249,7 @@ def generate_flux(prompt):
 
     while True:
 
-        time.sleep(1)
+        time.sleep(2)
 
         r = requests.get(
             f"https://api.replicate.com/v1/predictions/{prediction_id}",
@@ -262,15 +262,15 @@ def generate_flux(prompt):
 
         if status == "succeeded":
             output = result.get("output")
-            if isinstance(output, list) and len(output) > 0:
-                return output[0]
+            if isinstance(output, str):
+                return output
             return None
 
         if status in ["failed", "canceled"]:
             return None
 
 
-# редактирование изображения через Replicate FLUX dev (image-to-image)
+# редактирование изображения через Replicate nano-banana-pro
 def edit_image(image_url, prompt):
 
     url = "https://api.replicate.com/v1/predictions"
@@ -281,15 +281,15 @@ def edit_image(image_url, prompt):
     }
 
     data = {
-        "version": "93d72f81bd019dde2bfcba9585a6f74e600b13a43a96eb01a42da54f5ab4df6a",
+        "version": "fdf4cb96614227f3021c42f35bc92d4fd2e3e1ae9f50ca4004ffa8da64bf8dca",
         "input": {
             "prompt": prompt,
-            "image": image_url,
-            "prompt_strength": 0.85,
-            "num_outputs": 1,
-            "num_inference_steps": 30,
-            "guidance_scale": 7.5,
-            "aspect_ratio": "1:1"
+            "image_input": [image_url],
+            "aspect_ratio": "match_input_image",
+            "resolution": "2K",
+            "output_format": "jpg",
+            "safety_filter_level": "block_only_high",
+            "allow_fallback_model": True
         }
     }
 
@@ -303,7 +303,7 @@ def edit_image(image_url, prompt):
 
     while True:
 
-        time.sleep(1)
+        time.sleep(2)
 
         r = requests.get(
             f"https://api.replicate.com/v1/predictions/{prediction_id}",
@@ -316,8 +316,8 @@ def edit_image(image_url, prompt):
 
         if status == "succeeded":
             output = result.get("output")
-            if isinstance(output, list) and len(output) > 0:
-                return output[0]
+            if isinstance(output, str):
+                return output
             return None
 
         if status in ["failed", "canceled"]:
@@ -750,7 +750,7 @@ https://t.me/AiMagicCreateBot?start={user}
         if result:
             cursor.execute(
                 "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                (user,)
+                    (user,)
             )
             db.commit()
 
