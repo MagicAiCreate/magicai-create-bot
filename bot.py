@@ -5,10 +5,12 @@ import time
 import requests
 import json
 import html
+from datetime import datetime
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -41,6 +43,30 @@ history TEXT
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS purchases(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+user_id INTEGER,
+stars INTEGER,
+tokens INTEGER,
+payload TEXT,
+created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
+except:
+    pass
+
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
+except:
+    pass
+
+cursor.execute("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
+cursor.execute("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE last_seen IS NULL")
+
 db.commit()
 
 
@@ -72,7 +98,10 @@ def register_user(user, ref=None):
             )
 
     cursor.execute(
-        "INSERT INTO users VALUES(?,?,?,?,?)",
+        """
+        INSERT INTO users (user_id, username, tokens, requests, referrer, created_at, last_seen)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
         (user.id, username, 50, 0, referrer)
     )
 
@@ -108,6 +137,16 @@ def save_memory(user_id, history):
     cursor.execute(
         "UPDATE memory SET history=? WHERE user_id=?",
         (json.dumps(history), user_id)
+    )
+
+    db.commit()
+
+
+def update_activity(user_id):
+
+    cursor.execute(
+        "UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id=?",
+        (user_id,)
     )
 
     db.commit()
@@ -390,6 +429,40 @@ def build_result_caption(prompt, image_url, spent, remaining):
     )
 
 
+def admin_stats():
+
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0] or 0
+
+    cursor.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at)=DATE('now')")
+    new_today = cursor.fetchone()[0] or 0
+
+    cursor.execute("SELECT COUNT(*) FROM users WHERE DATE(last_seen)=DATE('now')")
+    active_today = cursor.fetchone()[0] or 0
+
+    left_today = max(total_users - active_today, 0)
+
+    cursor.execute("SELECT COALESCE(SUM(stars),0) FROM purchases WHERE DATE(created_at)=DATE('now')")
+    stars_today = cursor.fetchone()[0] or 0
+
+    cursor.execute("SELECT COALESCE(SUM(tokens),0) FROM purchases WHERE DATE(created_at)=DATE('now')")
+    tokens_today = cursor.fetchone()[0] or 0
+
+    return f"""
+📊 Статистика бота
+
+👥 Пользователей всего: {total_users}
+
+🆕 Новых за сегодня: {new_today}
+
+🚪 Ушло сегодня: {left_today}
+
+⭐ Заработано сегодня: {stars_today}
+
+💎 Куплено токенов сегодня: {tokens_today}
+"""
+
+
 # удаление старого сообщения
 def clean(chat_id):
 
@@ -452,12 +525,98 @@ def start(message):
             ref = None
 
     register_user(message.from_user, ref)
+    update_activity(message.from_user.id)
 
     send(
         message.chat.id,
         "✨ Добро пожаловать в Magic AI\n\nВыберите нужную функцию:",
         main_menu()
     )
+
+
+@bot.message_handler(commands=['leopold'])
+def leopold_panel(message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    bot.send_message(
+        message.chat.id,
+        admin_stats()
+    )
+
+
+@bot.message_handler(commands=['leopold_addme'])
+def leopold_addme(message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        amount = int(message.text.split()[1])
+
+        cursor.execute(
+            "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
+            (amount, ADMIN_ID)
+        )
+
+        db.commit()
+
+        bot.send_message(
+            message.chat.id,
+            f"💎 Начислено вам: {amount}"
+        )
+
+    except:
+
+        bot.send_message(
+            message.chat.id,
+            "Пример: /leopold_addme 1000"
+        )
+
+
+@bot.message_handler(commands=['leopold_give'])
+def leopold_give(message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        parts = message.text.split()
+
+        user_id = int(parts[1])
+        amount = int(parts[2])
+
+        cursor.execute(
+            "SELECT user_id FROM users WHERE user_id=?",
+            (user_id,)
+        )
+        exists = cursor.fetchone()
+
+        if not exists:
+            bot.send_message(message.chat.id, "❌ Пользователь не найден.")
+            return
+
+        cursor.execute(
+            "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
+            (amount, user_id)
+        )
+
+        db.commit()
+
+        bot.send_message(
+            message.chat.id,
+            f"💎 Пользователю {user_id} начислено: {amount}"
+        )
+
+    except:
+
+        bot.send_message(
+            message.chat.id,
+            "Пример: /leopold_give 123456789 500"
+        )
 
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
@@ -646,60 +805,64 @@ def callback(call):
             return
 
         if generation_lock.get(user):
-            bot.send_message(
-                call.message.chat.id,
-                "⏳ Подождите завершения прошлой генерации."
-            )
-            return
+    bot.send_message(
+        call.message.chat.id,
+        "⏳ Подождите завершения прошлой генерации."
+    )
+    return
 
-        generation_lock[user] = True
+generation_lock[user] = True
 
-        status_msg = generation_status(
-            call.message.chat.id,
-            [
-                "✅ Запрос принят",
-                "🧠 Улучшаю запрос...",
-                "🎨 Начинается генерация...",
-                "💎 Почти закончил..."
-            ]
-        )
+status_msg = generation_status(
+    call.message.chat.id,
+    [
+        "✅ Запрос принят",
+        "🧠 Улучшаю запрос...",
+        "🎨 Начинается генерация...",
+        "💎 Почти закончил..."
+    ]
+)
 
-        better_prompt = improve_prompt(task["prompt"])
-        result = generate_flux(better_prompt, aspect_ratio)
+better_prompt = improve_prompt(task["prompt"])
+result = generate_flux(better_prompt, aspect_ratio)
 
-        if result:
-            cursor.execute(
-                "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                (user,)
-            )
-            db.commit()
+if result:
 
-            remaining = tokens - 25
-            last_generated[user] = result
+    cursor.execute(
+        "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
+        (user,)
+    )
 
-            try:
-                bot.delete_message(call.message.chat.id, status_msg.message_id)
-            except:
-                pass
+    db.commit()
 
-            caption = build_result_caption(task["prompt"], result, 25, remaining)
+    remaining = tokens - 25
+    last_generated[user] = result
 
-            bot.send_photo(
-                call.message.chat.id,
-                result,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=result_keyboard(user)
-            )
-        else:
-            bot.edit_message_text(
-                "❌ Ошибка генерации изображения.",
-                call.message.chat.id,
-                status_msg.message_id
-            )
+    try:
+        bot.delete_message(call.message.chat.id, status_msg.message_id)
+    except:
+        pass
 
-        generation_lock[user] = False
-        return
+    caption = build_result_caption(task["prompt"], result, 25, remaining)
+
+    bot.send_photo(
+        call.message.chat.id,
+        result,
+        caption=caption,
+        parse_mode="HTML",
+        reply_markup=result_keyboard(user)
+    )
+
+else:
+
+    bot.edit_message_text(
+        "❌ Ошибка генерации изображения.",
+        call.message.chat.id,
+        status_msg.message_id
+    )
+
+generation_lock[user] = False
+return
 
 
 @bot.message_handler(content_types=['successful_payment'])
@@ -710,10 +873,16 @@ def successful_payment(message):
 
     if payload == "buy_250":
         tokens_add = 250
+        stars_paid = 349
+
     elif payload == "buy_500":
         tokens_add = 500
+        stars_paid = 649
+
     elif payload == "buy_1000":
         tokens_add = 1000
+        stars_paid = 1099
+
     else:
         return
 
@@ -721,6 +890,15 @@ def successful_payment(message):
         "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
         (tokens_add, user)
     )
+
+    cursor.execute(
+        """
+        INSERT INTO purchases (user_id, stars, tokens, payload)
+        VALUES (?, ?, ?, ?)
+        """,
+        (user, stars_paid, tokens_add, payload)
+    )
+
     db.commit()
 
     bot.send_message(
@@ -741,10 +919,13 @@ def photo_handler(message):
     if not exists:
         register_user(message.from_user)
 
+    update_activity(user)
+
     if mode != "image":
         return
 
     photo = message.photo[-1].file_id
+
     pending_edit[user] = {
         "type": "telegram",
         "value": photo
@@ -769,7 +950,8 @@ def handler(message):
     if not exists:
         register_user(message.from_user)
 
-    # эффект Таноса
+    update_activity(user)
+
     if mode is None:
         try:
             bot.delete_message(message.chat.id, message.message_id)
@@ -830,6 +1012,7 @@ def handler(message):
         )
 
         row = cursor.fetchone()
+
         if not row:
             bot.send_message(message.chat.id, "❌ Профиль не найден.")
             return
@@ -989,6 +1172,7 @@ https://t.me/AiMagicCreateBot?start={user}
             "SELECT tokens FROM users WHERE user_id=?",
             (user,)
         )
+
         row = cursor.fetchone()
 
         if not row:
@@ -1010,9 +1194,12 @@ https://t.me/AiMagicCreateBot?start={user}
             del pending_edit[user]
 
             if isinstance(edit_source, dict) and edit_source["type"] == "telegram":
+
                 file_info = bot.get_file(edit_source["value"])
                 file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+
             else:
+
                 file_url = edit_source["value"]
 
             pending_size[user] = {
@@ -1026,7 +1213,9 @@ https://t.me/AiMagicCreateBot?start={user}
                 "Какой размер изображения вы хотите?",
                 reply_markup=size_keyboard()
             )
+
             return
+
 
         pending_size[user] = {
             "type": "generate",
@@ -1038,7 +1227,9 @@ https://t.me/AiMagicCreateBot?start={user}
             "Какой размер изображения вы хотите?",
             reply_markup=size_keyboard()
         )
+
         return
 
 
 bot.infinity_polling()
+        
