@@ -259,7 +259,7 @@ def improve_prompt(prompt):
     return result["choices"][0]["message"]["content"]
 
 
-# генерация изображения через Replicate nano-banana-pro
+# генерация изображения
 def generate_flux(prompt, aspect_ratio="9:16"):
 
     url = "https://api.replicate.com/v1/predictions"
@@ -314,7 +314,6 @@ def generate_flux(prompt, aspect_ratio="9:16"):
             return None
 
 
-# редактирование изображения через Replicate nano-banana-pro
 def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
 
     url = "https://api.replicate.com/v1/predictions"
@@ -463,7 +462,6 @@ def admin_stats():
 """
 
 
-# удаление старого сообщения
 def clean(chat_id):
 
     if chat_id in last_messages:
@@ -474,7 +472,6 @@ def clean(chat_id):
             pass
 
 
-# отправка нового сообщения
 def send(chat_id, text, keyboard=None):
 
     clean(chat_id)
@@ -488,7 +485,6 @@ def send(chat_id, text, keyboard=None):
     last_messages[chat_id] = msg.message_id
 
 
-# главное меню
 def main_menu():
 
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -501,7 +497,6 @@ def main_menu():
     return kb
 
 
-# кнопка назад
 def back():
 
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -511,7 +506,6 @@ def back():
     return kb
 
 
-# старт
 @bot.message_handler(commands=['start'])
 def start(message):
 
@@ -805,64 +799,64 @@ def callback(call):
             return
 
         if generation_lock.get(user):
-    bot.send_message(
-        call.message.chat.id,
-        "⏳ Подождите завершения прошлой генерации."
-    )
-    return
+            bot.send_message(
+                call.message.chat.id,
+                "⏳ Подождите завершения прошлой генерации."
+            )
+            return
 
-generation_lock[user] = True
+        generation_lock[user] = True
 
-status_msg = generation_status(
-    call.message.chat.id,
-    [
-        "✅ Запрос принят",
-        "🧠 Улучшаю запрос...",
-        "🎨 Начинается генерация...",
-        "💎 Почти закончил..."
-    ]
-)
+        status_msg = generation_status(
+            call.message.chat.id,
+            [
+                "✅ Запрос принят",
+                "🧠 Улучшаю запрос...",
+                "🎨 Начинается генерация...",
+                "💎 Почти закончил..."
+            ]
+        )
 
-better_prompt = improve_prompt(task["prompt"])
-result = generate_flux(better_prompt, aspect_ratio)
+        better_prompt = improve_prompt(task["prompt"])
+        result = generate_flux(better_prompt, aspect_ratio)
 
-if result:
+        if result:
 
-    cursor.execute(
-        "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-        (user,)
-    )
+            cursor.execute(
+                "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
+                (user,)
+            )
 
-    db.commit()
+            db.commit()
 
-    remaining = tokens - 25
-    last_generated[user] = result
+            remaining = tokens - 25
+            last_generated[user] = result
 
-    try:
-        bot.delete_message(call.message.chat.id, status_msg.message_id)
-    except:
-        pass
+            try:
+                bot.delete_message(call.message.chat.id, status_msg.message_id)
+            except:
+                pass
 
-    caption = build_result_caption(task["prompt"], result, 25, remaining)
+            caption = build_result_caption(task["prompt"], result, 25, remaining)
 
-    bot.send_photo(
-        call.message.chat.id,
-        result,
-        caption=caption,
-        parse_mode="HTML",
-        reply_markup=result_keyboard(user)
-    )
+            bot.send_photo(
+                call.message.chat.id,
+                result,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=result_keyboard(user)
+            )
 
-else:
+        else:
 
-    bot.edit_message_text(
-        "❌ Ошибка генерации изображения.",
-        call.message.chat.id,
-        status_msg.message_id
-    )
+            bot.edit_message_text(
+                "❌ Ошибка генерации изображения.",
+                call.message.chat.id,
+                status_msg.message_id
+            )
 
-generation_lock[user] = False
-return
+        generation_lock[user] = False
+        return
 
 
 @bot.message_handler(content_types=['successful_payment'])
@@ -958,7 +952,6 @@ def handler(message):
         except:
             pass
 
-
     if text == "⬅️ Назад":
 
         user_modes[user] = None
@@ -969,7 +962,6 @@ def handler(message):
             main_menu()
         )
         return
-
 
     if text == "💰 Купить токены":
 
@@ -1002,7 +994,6 @@ def handler(message):
             reply_markup=kb
         )
         return
-
 
     if text == "👤 Профиль":
 
@@ -1047,7 +1038,6 @@ https://t.me/AiMagicCreateBot?start={user}
         )
         return
 
-
     if text == "🥷 Убийца фотошопа":
 
         user_modes[user] = "image"
@@ -1075,7 +1065,6 @@ https://t.me/AiMagicCreateBot?start={user}
         )
         return
 
-
     if text == "🧠 Твой умный собеседник":
 
         user_modes[user] = "chat"
@@ -1088,7 +1077,6 @@ https://t.me/AiMagicCreateBot?start={user}
             back()
         )
         return
-
 
     if text == "🎥 Видео будущего":
 
@@ -1104,7 +1092,6 @@ https://t.me/AiMagicCreateBot?start={user}
         )
         return
 
-
     if text == "🔉 Аудио с ИИ":
 
         user_modes[user] = "audio"
@@ -1118,7 +1105,6 @@ https://t.me/AiMagicCreateBot?start={user}
         )
         return
 
-
     if text == "❓ Помощь":
 
         send(
@@ -1130,7 +1116,6 @@ https://t.me/AiMagicCreateBot?start={user}
             back()
         )
         return
-
 
     if mode == "chat":
 
@@ -1164,7 +1149,6 @@ https://t.me/AiMagicCreateBot?start={user}
         )
 
         return
-
 
     if mode == "image":
 
@@ -1216,7 +1200,6 @@ https://t.me/AiMagicCreateBot?start={user}
 
             return
 
-
         pending_size[user] = {
             "type": "generate",
             "prompt": text
@@ -1232,4 +1215,3 @@ https://t.me/AiMagicCreateBot?start={user}
 
 
 bot.infinity_polling()
-        
