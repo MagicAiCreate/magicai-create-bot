@@ -16,6 +16,7 @@ user_modes = {}
 last_messages = {}
 
 pending_edit = {}
+pending_size = {}
 generation_lock = {}
 last_generated = {}
 
@@ -220,7 +221,7 @@ def improve_prompt(prompt):
 
 
 # генерация изображения через Replicate nano-banana-pro
-def generate_flux(prompt):
+def generate_flux(prompt, aspect_ratio="9:16"):
 
     url = "https://api.replicate.com/v1/predictions"
 
@@ -233,7 +234,7 @@ def generate_flux(prompt):
         "version": "fdf4cb96614227f3021c42f35bc92d4fd2e3e1ae9f50ca4004ffa8da64bf8dca",
         "input": {
             "prompt": prompt,
-            "aspect_ratio": "9:16",
+            "aspect_ratio": aspect_ratio,
             "resolution": "2K",
             "output_format": "jpg",
             "safety_filter_level": "block_only_high",
@@ -275,7 +276,7 @@ def generate_flux(prompt):
 
 
 # редактирование изображения через Replicate nano-banana-pro
-def edit_image(image_url, prompt):
+def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
 
     url = "https://api.replicate.com/v1/predictions"
 
@@ -289,7 +290,7 @@ def edit_image(image_url, prompt):
         "input": {
             "prompt": prompt,
             "image_input": [image_url],
-            "aspect_ratio": "match_input_image",
+            "aspect_ratio": aspect_ratio,
             "resolution": "2K",
             "output_format": "jpg",
             "safety_filter_level": "block_only_high",
@@ -357,6 +358,19 @@ def result_keyboard(user_id):
             "⚡ Доработать изображение",
             callback_data=f"rework_{user_id}"
         )
+    )
+
+    return kb
+
+
+def size_keyboard():
+
+    kb = telebot.types.InlineKeyboardMarkup(row_width=3)
+
+    kb.add(
+        telebot.types.InlineKeyboardButton("1:1", callback_data="size_1:1"),
+        telebot.types.InlineKeyboardButton("16:9", callback_data="size_16:9"),
+        telebot.types.InlineKeyboardButton("9:16", callback_data="size_9:16")
     )
 
     return kb
@@ -512,6 +526,151 @@ def callback(call):
             call.message.chat.id,
             "Напишите, что нужно доработать на изображении."
         )
+        return
+
+    if call.data.startswith("size_"):
+
+        aspect_ratio = call.data.replace("size_", "")
+
+        if user not in pending_size:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Запрос не найден."
+            )
+            return
+
+        cursor.execute(
+            "SELECT tokens FROM users WHERE user_id=?",
+            (user,)
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Профиль не найден."
+            )
+            return
+
+        tokens = row[0]
+
+        if tokens < 25:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Недостаточно токенов. Нужно 25."
+            )
+            return
+
+        task = pending_size[user]
+        del pending_size[user]
+
+        bot.answer_callback_query(call.id)
+
+        if task["type"] == "edit":
+
+            status_msg = generation_status(
+                call.message.chat.id,
+                [
+                    "✅ Фото получено",
+                    "🧠 Анализирую изменения...",
+                    "🎨 Применяю правки...",
+                    "⚡ Почти закончил..."
+                ]
+            )
+
+            result = edit_image(
+                task["image_url"],
+                task["prompt"],
+                aspect_ratio
+            )
+
+            if result:
+                cursor.execute(
+                    "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
+                    (user,)
+                )
+                db.commit()
+
+                remaining = tokens - 25
+                last_generated[user] = result
+
+                try:
+                    bot.delete_message(call.message.chat.id, status_msg.message_id)
+                except:
+                    pass
+
+                caption = build_result_caption(task["prompt"], result, 25, remaining)
+
+                bot.send_photo(
+                    call.message.chat.id,
+                    result,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=result_keyboard(user)
+                )
+            else:
+                bot.edit_message_text(
+                    "❌ Ошибка при обработке изображения.",
+                    call.message.chat.id,
+                    status_msg.message_id
+                )
+
+            return
+
+        if generation_lock.get(user):
+            bot.send_message(
+                call.message.chat.id,
+                "⏳ Подождите завершения прошлой генерации."
+            )
+            return
+
+        generation_lock[user] = True
+
+        status_msg = generation_status(
+            call.message.chat.id,
+            [
+                "✅ Запрос принят",
+                "🧠 Улучшаю запрос...",
+                "🎨 Начинается генерация...",
+                "⚡ Почти закончил..."
+            ]
+        )
+
+        better_prompt = improve_prompt(task["prompt"])
+        result = generate_flux(better_prompt, aspect_ratio)
+
+        if result:
+            cursor.execute(
+                "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
+                (user,)
+            )
+            db.commit()
+
+            remaining = tokens - 25
+            last_generated[user] = result
+
+            try:
+                bot.delete_message(call.message.chat.id, status_msg.message_id)
+            except:
+                pass
+
+            caption = build_result_caption(task["prompt"], result, 25, remaining)
+
+            bot.send_photo(
+                call.message.chat.id,
+                result,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=result_keyboard(user)
+            )
+        else:
+            bot.edit_message_text(
+                "❌ Ошибка генерации изображения.",
+                call.message.chat.id,
+                status_msg.message_id
+            )
+
+        generation_lock[user] = False
         return
 
 
@@ -788,112 +947,35 @@ https://t.me/AiMagicCreateBot?start={user}
             edit_source = pending_edit[user]
             del pending_edit[user]
 
-            status_msg = generation_status(
-                message.chat.id,
-                [
-                    "✅ Фото получено",
-                    "🧠 Анализирую изменения...",
-                    "🎨 Применяю правки...",
-                    "⚡ Почти закончил..."
-                ]
-            )
-
             if isinstance(edit_source, dict) and edit_source["type"] == "telegram":
                 file_info = bot.get_file(edit_source["value"])
                 file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
             else:
                 file_url = edit_source["value"]
 
-            result = edit_image(file_url, text)
+            pending_size[user] = {
+                "type": "edit",
+                "prompt": text,
+                "image_url": file_url
+            }
 
-            if result:
-                cursor.execute(
-                    "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                    (user,)
-                )
-                db.commit()
-
-                remaining = tokens - 25
-                last_generated[user] = result
-
-                try:
-                    bot.delete_message(message.chat.id, status_msg.message_id)
-                except:
-                    pass
-
-                caption = build_result_caption(text, result, 25, remaining)
-
-                bot.send_photo(
-                    message.chat.id,
-                    result,
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=result_keyboard(user)
-                )
-            else:
-                bot.edit_message_text(
-                    "❌ Ошибка при обработке изображения.",
-                    message.chat.id,
-                    status_msg.message_id
-                )
-
-            return
-
-        if generation_lock.get(user):
             bot.send_message(
                 message.chat.id,
-                "⏳ Подождите завершения прошлой генерации."
+                "Какой размер изображения вы хотите?",
+                reply_markup=size_keyboard()
             )
             return
 
-        generation_lock[user] = True
+        pending_size[user] = {
+            "type": "generate",
+            "prompt": text
+        }
 
-        status_msg = generation_status(
+        bot.send_message(
             message.chat.id,
-            [
-                "✅ Запрос принят",
-                "🧠 Улучшаю запрос...",
-                "🎨 Начинается генерация...",
-                "⚡ Почти закончил..."
-            ]
+            "Какой размер изображения вы хотите?",
+            reply_markup=size_keyboard()
         )
-
-        better_prompt = improve_prompt(text)
-        result = generate_flux(better_prompt)
-
-        if result:
-            cursor.execute(
-                "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                (user,)
-            )
-            db.commit()
-
-            remaining = tokens - 25
-            last_generated[user] = result
-
-            try:
-                bot.delete_message(message.chat.id, status_msg.message_id)
-            except:
-                pass
-
-            caption = build_result_caption(text, result, 25, remaining)
-
-            bot.send_photo(
-                message.chat.id,
-                result,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=result_keyboard(user)
-            )
-        else:
-            bot.edit_message_text(
-                "❌ Ошибка генерации изображения.",
-                message.chat.id,
-                status_msg.message_id
-            )
-
-        generation_lock[user] = False
-
         return
 
 
