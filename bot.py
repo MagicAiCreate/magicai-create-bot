@@ -98,7 +98,6 @@ def apply_bonus(tokens_amount):
 
 # регистрация пользователя
 def register_user(user, ref=None):
-
     cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user.id,))
     exists = cursor.fetchone()
 
@@ -106,18 +105,14 @@ def register_user(user, ref=None):
         return
 
     username = user.username if user.username else "none"
-
     referrer = None
 
     if ref and ref != user.id:
-
         cursor.execute("SELECT user_id FROM users WHERE user_id=?", (ref,))
         ref_exists = cursor.fetchone()
 
         if ref_exists:
-
             referrer = ref
-
             cursor.execute(
                 "UPDATE users SET tokens = tokens + 15 WHERE user_id=?",
                 (ref,)
@@ -136,12 +131,10 @@ def register_user(user, ref=None):
 
 # память GPT
 def get_memory(user_id):
-
     cursor.execute("SELECT history FROM memory WHERE user_id=?", (user_id,))
     data = cursor.fetchone()
 
     if data is None:
-
         history = [
             {"role": "system", "content": "Ты дружелюбный умный AI помощник."}
         ]
@@ -152,35 +145,29 @@ def get_memory(user_id):
         )
 
         db.commit()
-
         return history
 
     return json.loads(data[0])
 
 
 def save_memory(user_id, history):
-
     cursor.execute(
         "UPDATE memory SET history=? WHERE user_id=?",
         (json.dumps(history), user_id)
     )
-
     db.commit()
 
 
 def update_activity(user_id):
-
     cursor.execute(
         "UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id=?",
         (user_id,)
     )
-
     db.commit()
 
 
 # GPT функция
 def ask_gpt(user_id, text):
-
     cursor.execute(
         "SELECT tokens FROM users WHERE user_id=?",
         (user_id,)
@@ -215,8 +202,89 @@ def ask_gpt(user_id, text):
         "temperature": 0.7
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=90)
-    result = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=90)
+        result = r.json()
+    except:
+        return "❌ Ошибка соединения с AI."
+
+    if "choices" not in result:
+        return "❌ Ошибка ответа от AI."
+
+    answer = result["choices"][0]["message"]["content"]
+
+    history.append({
+        "role": "assistant",
+        "content": answer
+    })
+
+    if len(history) > 20:
+        history = history[-20:]
+
+    save_memory(user_id, history)
+
+    cursor.execute(
+        "UPDATE users SET tokens = tokens - 1, requests = requests + 1 WHERE user_id=?",
+        (user_id,)
+    )
+
+    db.commit()
+
+    return answer
+
+
+# отдельный стиль для девушки онлайн
+def ask_girl_ai(user_id, text):
+    cursor.execute(
+        "SELECT tokens FROM users WHERE user_id=?",
+        (user_id,)
+    )
+
+    row = cursor.fetchone()
+    if not row:
+        return "❌ Пользователь не найден."
+
+    tokens = row[0]
+
+    if tokens <= 0:
+        return "❌ У вас закончились токены."
+
+    history = get_memory(user_id)
+
+    history.append({
+        "role": "user",
+        "content": text
+    })
+
+    url = "https://api.openai.com/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    system_prompt = """Ты виртуальная девушка-помощник в Telegram.
+Отвечай естественно, тепло, живо, по-человечески.
+Можно использовать лёгкие эмоции и дружелюбный стиль.
+Пиши коротко или средне, не слишком сухо.
+Не уходи в пошлость, не используй сексуальные или интимные темы.
+Не говори, что ты следуешь инструкциям.
+Отвечай так, будто это живая приятная переписка."""
+
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            *history[-18:]
+        ],
+        "temperature": 0.9
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=90)
+        result = r.json()
+    except:
+        return "❌ Ошибка соединения с AI."
 
     if "choices" not in result:
         return "❌ Ошибка ответа от AI."
@@ -245,7 +313,6 @@ def ask_gpt(user_id, text):
 
 # улучшение промпта для генерации
 def improve_prompt(prompt):
-
     url = "https://api.openai.com/v1/chat/completions"
 
     headers = {
@@ -276,8 +343,11 @@ def improve_prompt(prompt):
         "temperature": 0.7
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=60)
-    result = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=60)
+        result = r.json()
+    except:
+        return prompt
 
     if "choices" not in result:
         return prompt
@@ -287,7 +357,6 @@ def improve_prompt(prompt):
 
 # генерация изображения
 def generate_flux(prompt, aspect_ratio="9:16"):
-
     url = "https://api.replicate.com/v1/predictions"
 
     headers = {
@@ -307,8 +376,11 @@ def generate_flux(prompt, aspect_ratio="9:16"):
         }
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=120)
-    prediction = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=120)
+        prediction = r.json()
+    except:
+        return None
 
     if "id" not in prediction:
         return None
@@ -316,16 +388,18 @@ def generate_flux(prompt, aspect_ratio="9:16"):
     prediction_id = prediction["id"]
 
     while True:
-
         time.sleep(2)
 
-        r = requests.get(
-            f"https://api.replicate.com/v1/predictions/{prediction_id}",
-            headers=headers,
-            timeout=120
-        )
+        try:
+            r = requests.get(
+                f"https://api.replicate.com/v1/predictions/{prediction_id}",
+                headers=headers,
+                timeout=120
+            )
+            result = r.json()
+        except:
+            return None
 
-        result = r.json()
         status = result.get("status")
 
         if status == "succeeded":
@@ -341,7 +415,6 @@ def generate_flux(prompt, aspect_ratio="9:16"):
 
 
 def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
-
     url = "https://api.replicate.com/v1/predictions"
 
     headers = {
@@ -362,8 +435,11 @@ def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
         }
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=120)
-    prediction = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=120)
+        prediction = r.json()
+    except:
+        return None
 
     if "id" not in prediction:
         return None
@@ -371,16 +447,18 @@ def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
     prediction_id = prediction["id"]
 
     while True:
-
         time.sleep(2)
 
-        r = requests.get(
-            f"https://api.replicate.com/v1/predictions/{prediction_id}",
-            headers=headers,
-            timeout=120
-        )
+        try:
+            r = requests.get(
+                f"https://api.replicate.com/v1/predictions/{prediction_id}",
+                headers=headers,
+                timeout=120
+            )
+            result = r.json()
+        except:
+            return None
 
-        result = r.json()
         status = result.get("status")
 
         if status == "succeeded":
@@ -396,7 +474,6 @@ def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
 
 
 def generation_status(chat_id, steps):
-
     msg = bot.send_message(chat_id, steps[0])
 
     for step in steps[1:]:
@@ -414,7 +491,6 @@ def generation_status(chat_id, steps):
 
 
 def result_keyboard(user_id):
-
     kb = telebot.types.InlineKeyboardMarkup()
 
     kb.add(
@@ -428,7 +504,6 @@ def result_keyboard(user_id):
 
 
 def size_keyboard():
-
     kb = telebot.types.InlineKeyboardMarkup(row_width=3)
 
     kb.add(
@@ -441,7 +516,6 @@ def size_keyboard():
 
 
 def payment_method_keyboard():
-
     kb = telebot.types.InlineKeyboardMarkup(row_width=2)
 
     kb.add(
@@ -466,7 +540,6 @@ def payment_method_keyboard():
 
 
 def crypto_keyboard():
-
     kb = telebot.types.InlineKeyboardMarkup()
 
     kb.add(
@@ -494,7 +567,6 @@ def crypto_keyboard():
 
 
 def crypto_packages_keyboard(asset):
-
     kb = telebot.types.InlineKeyboardMarkup()
 
     kb.add(
@@ -522,7 +594,6 @@ def crypto_packages_keyboard(asset):
 
 
 def create_crypto_invoice(user_id, asset, amount, tokens):
-
     if not CRYPTOBOT_TOKEN:
         return None
 
@@ -540,8 +611,11 @@ def create_crypto_invoice(user_id, asset, amount, tokens):
         "payload": f"{user_id}_{asset}_{tokens}"
     }
 
-    r = requests.post(url, headers=headers, json=payload, timeout=30)
-    data = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        data = r.json()
+    except:
+        return None
 
     if not data.get("ok"):
         return None
@@ -700,7 +774,6 @@ def send_video_stub(chat_id):
 
 
 def build_result_caption(prompt, image_url, spent, remaining):
-
     safe_prompt = html.escape(prompt)
 
     return (
@@ -714,7 +787,6 @@ def build_result_caption(prompt, image_url, spent, remaining):
 
 
 def admin_stats():
-
     cursor.execute("SELECT COUNT(*) FROM users")
     total_users = cursor.fetchone()[0] or 0
 
@@ -758,9 +830,7 @@ def admin_stats():
 
 
 def clean(chat_id):
-
     if chat_id in last_messages:
-
         try:
             bot.delete_message(chat_id, last_messages[chat_id])
         except:
@@ -768,7 +838,6 @@ def clean(chat_id):
 
 
 def send(chat_id, text, keyboard=None):
-
     clean(chat_id)
 
     msg = bot.send_message(
@@ -781,29 +850,24 @@ def send(chat_id, text, keyboard=None):
 
 
 def main_menu():
-
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    kb.row("🥷 Убийца фотошопа", "🧠 Твой умный собеседник")
-    kb.row("🎥 Видео будущего", "🔉 Аудио с ИИ")
-    kb.row("👤 Профиль", "❓ Помощь")
-    kb.row("💰 Купить токены")
+    kb.row("👧 Девушка онлайн", "🥷 Убийца фотошопа")
+    kb.row("🧠 Твой умный собеседник", "🎥 Видео будущего")
+    kb.row("🔉 Аудио с ИИ", "👤 Профиль")
+    kb.row("❓ Помощь", "💰 Купить токены")
 
     return kb
 
 
 def back():
-
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-
     kb.row("⬅️ Назад")
-
     return kb
 
 
 @bot.message_handler(commands=['start'])
 def start(message):
-
     ref = None
     args = message.text.split()
 
@@ -825,7 +889,6 @@ def start(message):
 
 @bot.message_handler(commands=['leopold'])
 def leopold_panel(message):
-
     if message.from_user.id != ADMIN_ID:
         return
 
@@ -837,12 +900,10 @@ def leopold_panel(message):
 
 @bot.message_handler(commands=['leopold_addme'])
 def leopold_addme(message):
-
     if message.from_user.id != ADMIN_ID:
         return
 
     try:
-
         amount = int(message.text.split()[1])
 
         cursor.execute(
@@ -858,7 +919,6 @@ def leopold_addme(message):
         )
 
     except:
-
         bot.send_message(
             message.chat.id,
             "Пример: /leopold_addme 1000"
@@ -867,12 +927,10 @@ def leopold_addme(message):
 
 @bot.message_handler(commands=['leopold_give'])
 def leopold_give(message):
-
     if message.from_user.id != ADMIN_ID:
         return
 
     try:
-
         parts = message.text.split()
 
         user_id = int(parts[1])
@@ -901,7 +959,6 @@ def leopold_give(message):
         )
 
     except:
-
         bot.send_message(
             message.chat.id,
             "Пример: /leopold_give 123456789 500"
@@ -909,7 +966,6 @@ def leopold_give(message):
 
 
 def check_crypto_payments():
-
     if not CRYPTOBOT_TOKEN:
         return
 
@@ -919,9 +975,11 @@ def check_crypto_payments():
         "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN
     }
 
-    r = requests.get(url, headers=headers, timeout=30)
-
-    data = r.json()
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+        data = r.json()
+    except:
+        return
 
     if not data.get("ok"):
         return
@@ -929,7 +987,6 @@ def check_crypto_payments():
     invoices = data["result"]["items"]
 
     for inv in invoices:
-
         if inv["status"] != "paid":
             continue
 
@@ -983,13 +1040,11 @@ def check_crypto_payments():
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def pre_checkout_query(query):
-
     bot.answer_pre_checkout_query(query.id, ok=True)
 
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-
     user = call.from_user.id
 
     if call.data == "open_buy_tokens":
@@ -1157,7 +1212,6 @@ def callback(call):
         return
 
     if call.data == "pay_stars":
-
         kb = telebot.types.InlineKeyboardMarkup()
 
         kb.add(
@@ -1190,7 +1244,6 @@ def callback(call):
         return
 
     if call.data == "pay_crypto":
-
         bot.edit_message_text(
             "💰 Выберите криптовалюту:",
             call.message.chat.id,
@@ -1230,7 +1283,6 @@ def callback(call):
         return
 
     if call.data.startswith("crypto_buy_"):
-
         parts = call.data.split("_")
         asset = parts[2]
         token_pack = parts[3]
@@ -1281,13 +1333,11 @@ def callback(call):
         return
 
     if call.data == "pay_card":
-
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "💳 Оплата картой скоро будет доступна.")
         return
 
     if call.data == "buy_250":
-
         prices = [telebot.types.LabeledPrice("250 tokens", 349)]
 
         bot.send_invoice(
@@ -1305,7 +1355,6 @@ def callback(call):
         return
 
     if call.data == "buy_500":
-
         prices = [telebot.types.LabeledPrice("500 tokens", 649)]
 
         bot.send_invoice(
@@ -1323,7 +1372,6 @@ def callback(call):
         return
 
     if call.data == "buy_1000":
-
         prices = [telebot.types.LabeledPrice("1000 tokens", 1099)]
 
         bot.send_invoice(
@@ -1341,7 +1389,6 @@ def callback(call):
         return
 
     if call.data.startswith("rework_"):
-
         target_user = int(call.data.split("_")[1])
 
         if user != target_user:
@@ -1372,7 +1419,6 @@ def callback(call):
         return
 
     if call.data.startswith("size_"):
-
         aspect_ratio = call.data.replace("size_", "")
 
         if user not in pending_size:
@@ -1410,7 +1456,6 @@ def callback(call):
         bot.answer_callback_query(call.id)
 
         if task["type"] == "edit":
-
             status_msg = generation_status(
                 call.message.chat.id,
                 [
@@ -1469,76 +1514,72 @@ def callback(call):
 
         generation_lock[user] = True
 
-        status_msg = generation_status(
-            call.message.chat.id,
-            [
-                "✅ Запрос принят",
-                "🧠 Улучшаю запрос...",
-                "🎨 Начинается генерация...",
-                "💎 Почти закончил..."
-            ]
-        )
-
-        better_prompt = improve_prompt(task["prompt"])
-        result = generate_flux(better_prompt, aspect_ratio)
-
-        if result:
-
-            cursor.execute(
-                "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                (user,)
-            )
-
-            db.commit()
-
-            remaining = tokens - 25
-            last_generated[user] = result
-
-            try:
-                bot.delete_message(call.message.chat.id, status_msg.message_id)
-            except:
-                pass
-
-            caption = build_result_caption(task["prompt"], result, 25, remaining)
-
-            bot.send_photo(
+        try:
+            status_msg = generation_status(
                 call.message.chat.id,
-                result,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=result_keyboard(user)
+                [
+                    "✅ Запрос принят",
+                    "🧠 Улучшаю запрос...",
+                    "🎨 Начинается генерация...",
+                    "💎 Почти закончил..."
+                ]
             )
 
-        else:
+            better_prompt = improve_prompt(task["prompt"])
+            result = generate_flux(better_prompt, aspect_ratio)
 
-            bot.edit_message_text(
-                "❌ Ошибка генерации изображения.",
-                call.message.chat.id,
-                status_msg.message_id
-            )
+            if result:
+                cursor.execute(
+                    "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
+                    (user,)
+                )
 
-        generation_lock[user] = False
+                db.commit()
+
+                remaining = tokens - 25
+                last_generated[user] = result
+
+                try:
+                    bot.delete_message(call.message.chat.id, status_msg.message_id)
+                except:
+                    pass
+
+                caption = build_result_caption(task["prompt"], result, 25, remaining)
+
+                bot.send_photo(
+                    call.message.chat.id,
+                    result,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=result_keyboard(user)
+                )
+
+            else:
+                bot.edit_message_text(
+                    "❌ Ошибка генерации изображения.",
+                    call.message.chat.id,
+                    status_msg.message_id
+                )
+        finally:
+            generation_lock[user] = False
+
         return
 
 
 @bot.message_handler(content_types=['successful_payment'])
 def successful_payment(message):
-
     payload = message.successful_payment.invoice_payload
     user = message.from_user.id
 
     if payload == "buy_250":
         tokens_add = apply_bonus(250)
         stars_paid = 349
-
     elif payload == "buy_500":
         tokens_add = apply_bonus(500)
         stars_paid = 649
-
     elif payload == "buy_1000":
         tokens_add = apply_bonus(1000)
         stars_paid = 1099
-
     else:
         return
 
@@ -1565,7 +1606,6 @@ def successful_payment(message):
 
 @bot.message_handler(content_types=['photo'])
 def photo_handler(message):
-
     user = message.from_user.id
     mode = user_modes.get(user)
 
@@ -1617,7 +1657,6 @@ def photo_handler(message):
 
 @bot.message_handler(content_types=['video'])
 def video_handler(message):
-
     user = message.from_user.id
     mode = user_modes.get(user)
 
@@ -1654,7 +1693,6 @@ def video_handler(message):
 
 @bot.message_handler(content_types=['text'])
 def handler(message):
-
     text = message.text
     user = message.from_user.id
     mode = user_modes.get(user)
@@ -1674,7 +1712,6 @@ def handler(message):
             pass
 
     if text == "⬅️ Назад":
-
         user_modes[user] = None
 
         send(
@@ -1685,7 +1722,6 @@ def handler(message):
         return
 
     if text == "💰 Купить токены":
-
         bot.send_message(
             message.chat.id,
             "Выберите способ оплаты:",
@@ -1694,7 +1730,6 @@ def handler(message):
         return
 
     if text == "👤 Профиль":
-
         cursor.execute(
             "SELECT tokens FROM users WHERE user_id=?",
             (user,)
@@ -1729,8 +1764,29 @@ https://t.me/AiMagicCreateBot?start={user}
         )
         return
 
-    if text == "🥷 Убийца фотошопа":
+    if text == "👧 Девушка онлайн":
+        user_modes[user] = "girl"
 
+        send(
+            message.chat.id,
+            """👧 Девушка онлайн
+
+Здесь живой AI-режим общения.
+
+Что умеет:
+• общение в сообщениях
+• более живой стиль ответа
+• память последних сообщений
+• ощущение переписки в онлайне
+
+Напишите сообщение и начните общение.
+
+Тариф: 1 сообщение = 1 💎""",
+            back()
+        )
+        return
+
+    if text == "🥷 Убийца фотошопа":
         user_modes[user] = "image"
 
         send(
@@ -1757,7 +1813,6 @@ https://t.me/AiMagicCreateBot?start={user}
         return
 
     if text == "🧠 Твой умный собеседник":
-
         user_modes[user] = "chat"
 
         send(
@@ -1770,7 +1825,6 @@ https://t.me/AiMagicCreateBot?start={user}
         return
 
     if text == "🎥 Видео будущего":
-
         user_modes[user] = "video"
 
         send(
@@ -1787,7 +1841,6 @@ https://t.me/AiMagicCreateBot?start={user}
         return
 
     if text == "🔉 Аудио с ИИ":
-
         user_modes[user] = "audio"
 
         send(
@@ -1800,7 +1853,6 @@ https://t.me/AiMagicCreateBot?start={user}
         return
 
     if text == "❓ Помощь":
-
         send(
             message.chat.id,
             """❓ Помощь
@@ -1811,8 +1863,42 @@ https://t.me/AiMagicCreateBot?start={user}
         )
         return
 
-    if mode == "chat":
+    if mode == "girl":
+        msg = bot.send_message(
+            message.chat.id,
+            "💬 Девушка печатает..."
+        )
 
+        time.sleep(0.7)
+
+        bot.edit_message_text(
+            "👀 Читает ваше сообщение...",
+            message.chat.id,
+            msg.message_id
+        )
+
+        time.sleep(0.7)
+
+        bot.edit_message_text(
+            "✨ Готовит ответ...",
+            message.chat.id,
+            msg.message_id
+        )
+
+        answer = ask_girl_ai(user, text)
+
+        try:
+            bot.edit_message_text(
+                f"👧 {answer}",
+                message.chat.id,
+                msg.message_id
+            )
+        except:
+            bot.send_message(message.chat.id, f"👧 {answer}")
+
+        return
+
+    if mode == "chat":
         msg = bot.send_message(
             message.chat.id,
             "💎 Запрос получен..."
@@ -1836,16 +1922,18 @@ https://t.me/AiMagicCreateBot?start={user}
 
         answer = ask_gpt(user, text)
 
-        bot.edit_message_text(
-            f"✨ {answer}",
-            message.chat.id,
-            msg.message_id
-        )
+        try:
+            bot.edit_message_text(
+                f"✨ {answer}",
+                message.chat.id,
+                msg.message_id
+            )
+        except:
+            bot.send_message(message.chat.id, f"✨ {answer}")
 
         return
 
     if mode == "video":
-
         video_mode = pending_video_mode.get(user)
 
         if video_mode == "text":
@@ -1867,7 +1955,6 @@ https://t.me/AiMagicCreateBot?start={user}
             return
 
     if mode == "image":
-
         cursor.execute(
             "SELECT tokens FROM users WHERE user_id=?",
             (user,)
@@ -1889,17 +1976,13 @@ https://t.me/AiMagicCreateBot?start={user}
             return
 
         if user in pending_edit:
-
             edit_source = pending_edit[user]
             del pending_edit[user]
 
             if isinstance(edit_source, dict) and edit_source["type"] == "telegram":
-
                 file_info = bot.get_file(edit_source["value"])
                 file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-
             else:
-
                 file_url = edit_source["value"]
 
             pending_size[user] = {
@@ -1931,9 +2014,7 @@ https://t.me/AiMagicCreateBot?start={user}
 
 
 def crypto_loop():
-
     while True:
-
         try:
             check_crypto_payments()
         except:
