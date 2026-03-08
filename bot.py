@@ -25,6 +25,12 @@ pending_crypto_asset = {}
 generation_lock = {}
 last_generated = {}
 
+pending_video_mode = {}
+pending_video_prompt = {}
+pending_video_photo = {}
+pending_video_ref = {}
+pending_video_size = {}
+
 # база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
 cursor = db.cursor()
@@ -564,6 +570,135 @@ def create_crypto_invoice(user_id, asset, amount, tokens):
     return invoice["pay_url"], str(invoice["invoice_id"])
 
 
+def buy_tokens_keyboard():
+    kb = telebot.types.InlineKeyboardMarkup()
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "💰 Пополнить баланс",
+            callback_data="open_buy_tokens"
+        )
+    )
+    return kb
+
+
+def video_menu_keyboard():
+    kb = telebot.types.InlineKeyboardMarkup()
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "Создать видео по запросу",
+            callback_data="video_text"
+        )
+    )
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "Создать видео по фото",
+            callback_data="video_photo"
+        )
+    )
+    kb.add(
+        telebot.types.InlineKeyboardButton(
+            "Оживить фото по тренд-видео",
+            callback_data="video_motion"
+        )
+    )
+    return kb
+
+
+def video_size_keyboard(prefix):
+    kb = telebot.types.InlineKeyboardMarkup(row_width=3)
+    kb.add(
+        telebot.types.InlineKeyboardButton("1:1", callback_data=f"{prefix}_size_1:1"),
+        telebot.types.InlineKeyboardButton("9:16", callback_data=f"{prefix}_size_9:16"),
+        telebot.types.InlineKeyboardButton("16:9", callback_data=f"{prefix}_size_16:9")
+    )
+    return kb
+
+
+def video_duration_keyboard(prefix):
+    kb = telebot.types.InlineKeyboardMarkup(row_width=3)
+    kb.row(
+        telebot.types.InlineKeyboardButton("3 сек • 90 💎", callback_data=f"{prefix}_dur_3_90"),
+        telebot.types.InlineKeyboardButton("5 сек • 150 💎", callback_data=f"{prefix}_dur_5_150"),
+        telebot.types.InlineKeyboardButton("7 сек • 210 💎", callback_data=f"{prefix}_dur_7_210")
+    )
+    kb.row(
+        telebot.types.InlineKeyboardButton("10 сек • 300 💎", callback_data=f"{prefix}_dur_10_300"),
+        telebot.types.InlineKeyboardButton("15 сек • 450 💎", callback_data=f"{prefix}_dur_15_450")
+    )
+    return kb
+
+
+def motion_price_by_duration(duration):
+    mapping = {
+        3: 120,
+        5: 200,
+        7: 280,
+        10: 400,
+        15: 600
+    }
+    return mapping.get(duration, 600)
+
+
+def video_intro_text():
+    return """🎥 Видео будущего
+
+Здесь вы можете создать видео тремя способами:
+
+• Создать видео по запросу — сгенерировать видео с нуля
+• Создать видео по фото — оживить фото по сценарию
+• Оживить фото по тренд-видео — перенести движения из видео
+
+Стоимость генерации:
+от 90 💎 до 600 💎
+
+Выберите режим создания видео."""
+
+
+def build_video_caption(video_url, prompt, size, duration, quality, spent, remaining):
+    safe_prompt = html.escape(prompt) if prompt else "—"
+    return (
+        f'Вот <a href="{video_url}">прямая ссылка</a> на качественную версию.\n\n'
+        f"Ваш запрос: {safe_prompt}\n"
+        f"Размер: {size}\n"
+        f"Длительность: {duration} сек\n"
+        f"Качество: {quality}\n"
+        f"Списано: 💎 {spent}\n"
+        f"Осталось: 💎 {remaining}"
+    )
+
+
+def build_motion_caption(video_url, size, duration, quality, spent, remaining):
+    return (
+        f'Вот <a href="{video_url}">прямая ссылка</a> на качественную версию.\n\n'
+        f"Размер: {size}\n"
+        f"Длительность: {duration} сек\n"
+        f"Качество: {quality}\n"
+        f"Списано: 💎 {spent}\n"
+        f"Осталось: 💎 {remaining}"
+    )
+
+
+def video_waiting_text():
+    return """🎥 Генерация видео занимает несколько минут...
+Обычно это происходит быстро, но иногда нужно немного подождать."""
+
+
+def insufficient_tokens_text(need, have):
+    return (
+        f"Недостаточно токенов для этого видео.\n\n"
+        f"Нужно: 💎 {need}\n"
+        f"У вас: 💎 {have}\n\n"
+        f"Пополните баланс и продолжите генерацию."
+    )
+
+
+def send_video_stub(chat_id):
+    bot.send_message(
+        chat_id,
+        "⚠️ Видео-интерфейс уже готов, но Kling API начнет реально генерировать только после активации resource pack."
+    )
+
+
 def build_result_caption(prompt, image_url, spent, remaining):
 
     safe_prompt = html.escape(prompt)
@@ -856,6 +991,170 @@ def pre_checkout_query(query):
 def callback(call):
 
     user = call.from_user.id
+
+    if call.data == "open_buy_tokens":
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            "Выберите способ оплаты:",
+            reply_markup=payment_method_keyboard()
+        )
+        return
+
+    if call.data == "video_text":
+        pending_video_mode[user] = "text"
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            """Создание видео по запросу
+
+Опишите, какое видео вы хотите получить.
+Чем точнее запрос, тем лучше результат.
+
+Пример:
+девушка с длинными чёрными волосами в зелёной шляпе и фиолетовой куртке идёт по неоновому городу ночью под дождём, мокрый асфальт отражает вывески, кинематографичный свет, плавное движение камеры"""
+        )
+        return
+
+    if call.data == "video_photo":
+        pending_video_mode[user] = "photo"
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            """Создание видео по фото
+
+Отправьте фото, которое нужно оживить или использовать как основу для видео."""
+        )
+        return
+
+    if call.data == "video_motion":
+        pending_video_mode[user] = "motion"
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            """Оживить фото по тренд-видео
+
+Эта функция оживляет ваше фото по движениям из видео, которое вы отправите.
+Можно делать трендовые танцы, движения, эмоции и вирусные ролики.
+
+Важно:
+максимальная длина результата — до 15 секунд.
+Если видео длиннее 15 секунд, будут использованы только первые 15 секунд.
+
+Сначала отправьте фото, которое нужно оживить."""
+        )
+        return
+
+    if call.data.startswith("video_text_size_"):
+        size = call.data.replace("video_text_size_", "")
+        pending_video_size[user] = size
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            "Теперь выберите длительность видео.",
+            reply_markup=video_duration_keyboard("video_text")
+        )
+        return
+
+    if call.data.startswith("video_photo_size_"):
+        size = call.data.replace("video_photo_size_", "")
+        pending_video_size[user] = size
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            "Теперь выберите длительность видео.",
+            reply_markup=video_duration_keyboard("video_photo")
+        )
+        return
+
+    if call.data.startswith("video_motion_size_"):
+        size = call.data.replace("video_motion_size_", "")
+        pending_video_size[user] = size
+
+        duration = pending_video_ref.get(user, {}).get("duration", 15)
+        spent = motion_price_by_duration(duration)
+
+        cursor.execute("SELECT tokens FROM users WHERE user_id=?", (user,))
+        row = cursor.fetchone()
+
+        if not row:
+            bot.answer_callback_query(call.id, "❌ Профиль не найден.")
+            return
+
+        have = row[0]
+
+        if have < spent:
+            bot.answer_callback_query(call.id)
+            bot.send_message(
+                call.message.chat.id,
+                insufficient_tokens_text(spent, have),
+                reply_markup=buy_tokens_keyboard()
+            )
+            return
+
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "Ваш запрос принят.\n\n" + video_waiting_text())
+
+        send_video_stub(call.message.chat.id)
+        return
+
+    if call.data.startswith("video_text_dur_"):
+        parts = call.data.split("_")
+        duration = int(parts[3])
+        spent = int(parts[4])
+
+        cursor.execute("SELECT tokens FROM users WHERE user_id=?", (user,))
+        row = cursor.fetchone()
+
+        if not row:
+            bot.answer_callback_query(call.id, "❌ Профиль не найден.")
+            return
+
+        have = row[0]
+
+        if have < spent:
+            bot.answer_callback_query(call.id)
+            bot.send_message(
+                call.message.chat.id,
+                insufficient_tokens_text(spent, have),
+                reply_markup=buy_tokens_keyboard()
+            )
+            return
+
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "Ваш запрос принят.\n\n" + video_waiting_text())
+
+        send_video_stub(call.message.chat.id)
+        return
+
+    if call.data.startswith("video_photo_dur_"):
+        parts = call.data.split("_")
+        duration = int(parts[3])
+        spent = int(parts[4])
+
+        cursor.execute("SELECT tokens FROM users WHERE user_id=?", (user,))
+        row = cursor.fetchone()
+
+        if not row:
+            bot.answer_callback_query(call.id, "❌ Профиль не найден.")
+            return
+
+        have = row[0]
+
+        if have < spent:
+            bot.answer_callback_query(call.id)
+            bot.send_message(
+                call.message.chat.id,
+                insufficient_tokens_text(spent, have),
+                reply_markup=buy_tokens_keyboard()
+            )
+            return
+
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "Ваш запрос принят.\n\n" + video_waiting_text())
+
+        send_video_stub(call.message.chat.id)
+        return
 
     if call.data == "pay_stars":
 
@@ -1278,19 +1577,78 @@ def photo_handler(message):
 
     update_activity(user)
 
-    if mode != "image":
+    if mode == "image":
+        photo = message.photo[-1].file_id
+
+        pending_edit[user] = {
+            "type": "telegram",
+            "value": photo
+        }
+
+        bot.send_message(
+            message.chat.id,
+            "Теперь напишите, что нужно изменить на данной картинке."
+        )
         return
 
-    photo = message.photo[-1].file_id
+    if mode == "video":
+        photo = message.photo[-1].file_id
+        video_mode = pending_video_mode.get(user)
 
-    pending_edit[user] = {
-        "type": "telegram",
-        "value": photo
+        if video_mode == "photo":
+            pending_video_photo[user] = photo
+            bot.send_message(
+                message.chat.id,
+                """Теперь напишите, что должно происходить в видео.
+
+Пример:
+девушка медленно поворачивает голову в камеру, ветер двигает волосы, мягкий свет падает на лицо, лёгкая улыбка, плавное кинематографичное движение"""
+            )
+            return
+
+        if video_mode == "motion":
+            pending_video_photo[user] = photo
+            bot.send_message(
+                message.chat.id,
+                "Теперь отправьте видео-референс с движением, которое нужно повторить."
+            )
+            return
+
+
+@bot.message_handler(content_types=['video'])
+def video_handler(message):
+
+    user = message.from_user.id
+    mode = user_modes.get(user)
+
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user,))
+    exists = cursor.fetchone()
+
+    if not exists:
+        register_user(message.from_user)
+
+    update_activity(user)
+
+    if mode != "video":
+        return
+
+    video_mode = pending_video_mode.get(user)
+
+    if video_mode != "motion":
+        return
+
+    duration = message.video.duration if message.video and message.video.duration else 15
+    duration = min(duration, 15)
+
+    pending_video_ref[user] = {
+        "file_id": message.video.file_id,
+        "duration": duration
     }
 
     bot.send_message(
         message.chat.id,
-        "Теперь напишите, что нужно изменить на данной картинке."
+        "Теперь выберите размер видео.",
+        reply_markup=video_size_keyboard("video_motion")
     )
 
 
@@ -1338,7 +1696,7 @@ def handler(message):
     if text == "👤 Профиль":
 
         cursor.execute(
-            "SELECT tokens, requests FROM users WHERE user_id=?",
+            "SELECT tokens FROM users WHERE user_id=?",
             (user,)
         )
 
@@ -1348,27 +1706,20 @@ def handler(message):
             bot.send_message(message.chat.id, "❌ Профиль не найден.")
             return
 
-        tokens, requests_count = row
+        tokens = row[0]
 
         text_profile = f"""
-👤 Ваш профиль
+👤 Ваш аккаунт
 
-━━━━━━━━━━━━━━━
+💎 Баланс: {tokens}
 
-🆔 ID: {user}
+Хочешь заработать больше токенов?
+Приглашай друзей и получай +15 💎 за каждого нового пользователя.
 
-💎 Баланс токенов: {tokens}
-
-📊 Использовано запросов: {requests_count}
-
-━━━━━━━━━━━━━━━
-
-🔗 Ваша реферальная ссылка
-
+🔗 Ваша реферальная ссылка:
 https://t.me/AiMagicCreateBot?start={user}
 
-💸 Приглашайте друзей и получайте
-+15 💎 за каждого нового пользователя.
+Отправь ссылку друзьям и получай бонусы за каждую регистрацию.
 """
 
         send(
@@ -1424,11 +1775,14 @@ https://t.me/AiMagicCreateBot?start={user}
 
         send(
             message.chat.id,
-            """🎥 Генерация видео
-
-Скоро здесь появится
-создание AI видео.""",
+            video_intro_text(),
             back()
+        )
+
+        bot.send_message(
+            message.chat.id,
+            "Выберите, что хотите сделать:",
+            reply_markup=video_menu_keyboard()
         )
         return
 
@@ -1489,6 +1843,28 @@ https://t.me/AiMagicCreateBot?start={user}
         )
 
         return
+
+    if mode == "video":
+
+        video_mode = pending_video_mode.get(user)
+
+        if video_mode == "text":
+            pending_video_prompt[user] = text
+            bot.send_message(
+                message.chat.id,
+                "Теперь выберите размер видео.",
+                reply_markup=video_size_keyboard("video_text")
+            )
+            return
+
+        if video_mode == "photo" and user in pending_video_photo:
+            pending_video_prompt[user] = text
+            bot.send_message(
+                message.chat.id,
+                "Теперь выберите размер видео.",
+                reply_markup=video_size_keyboard("video_photo")
+            )
+            return
 
     if mode == "image":
 
