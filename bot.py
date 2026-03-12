@@ -233,84 +233,6 @@ def ask_gpt(user_id, text):
     return answer
 
 
-# отдельный стиль для девушки онлайн
-def ask_girl_ai(user_id, text):
-    cursor.execute(
-        "SELECT tokens FROM users WHERE user_id=?",
-        (user_id,)
-    )
-
-    row = cursor.fetchone()
-    if not row:
-        return "❌ Пользователь не найден."
-
-    tokens = row[0]
-
-    if tokens <= 0:
-        return "❌ У вас закончились токены."
-
-    history = get_memory(user_id)
-
-    history.append({
-        "role": "user",
-        "content": text
-    })
-
-    url = "https://api.openai.com/v1/chat/completions"
-
-    headers = {
-        "Authorization": f"Bearer {OPENAI_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    system_prompt = """Ты виртуальная девушка-помощник в Telegram.
-Отвечай естественно, тепло, живо, по-человечески.
-Можно использовать лёгкие эмоции и дружелюбный стиль.
-Пиши коротко или средне, не слишком сухо.
-Не уходи в пошлость, не используй сексуальные или интимные темы.
-Не говори, что ты следуешь инструкциям.
-Отвечай так, будто это живая приятная переписка."""
-
-    data = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *history[-18:]
-        ],
-        "temperature": 0.9
-    }
-
-    try:
-        r = requests.post(url, headers=headers, json=data, timeout=90)
-        result = r.json()
-    except:
-        return "❌ Ошибка соединения с AI."
-
-    if "choices" not in result:
-        return "❌ Ошибка ответа от AI."
-
-    answer = result["choices"][0]["message"]["content"]
-
-    history.append({
-        "role": "assistant",
-        "content": answer
-    })
-
-    if len(history) > 20:
-        history = history[-20:]
-
-    save_memory(user_id, history)
-
-    cursor.execute(
-        "UPDATE users SET tokens = tokens - 1, requests = requests + 1 WHERE user_id=?",
-        (user_id,)
-    )
-
-    db.commit()
-
-    return answer
-
-
 # улучшение промпта для генерации
 def improve_prompt(prompt):
     url = "https://api.openai.com/v1/chat/completions"
@@ -852,10 +774,10 @@ def send(chat_id, text, keyboard=None):
 def main_menu():
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    kb.row("👧 Девушка онлайн", "🥷 Убийца фотошопа")
-    kb.row("🧠 Твой умный собеседник", "🎥 Видео будущего")
-    kb.row("🔉 Аудио с ИИ", "👤 Профиль")
-    kb.row("❓ Помощь", "💰 Купить токены")
+    kb.row("🥷 Убийца фотошопа", "🧠 Твой умный собеседник")
+    kb.row("🎥 Видео будущего", "🔉 Аудио с ИИ")
+    kb.row("👤 Профиль", "❓ Помощь")
+    kb.row("💰 Купить токены")
 
     return kb
 
@@ -1764,28 +1686,6 @@ https://t.me/AiMagicCreateBot?start={user}
         )
         return
 
-    if text == "👧 Девушка онлайн":
-        user_modes[user] = "girl"
-
-        send(
-            message.chat.id,
-            """👧 Девушка онлайн
-
-Здесь живой AI-режим общения.
-
-Что умеет:
-• общение в сообщениях
-• более живой стиль ответа
-• память последних сообщений
-• ощущение переписки в онлайне
-
-Напишите сообщение и начните общение.
-
-Тариф: 1 сообщение = 1 💎""",
-            back()
-        )
-        return
-
     if text == "🥷 Убийца фотошопа":
         user_modes[user] = "image"
 
@@ -1861,41 +1761,6 @@ https://t.me/AiMagicCreateBot?start={user}
 напишите в поддержку.""",
             back()
         )
-        return
-
-    if mode == "girl":
-        msg = bot.send_message(
-            message.chat.id,
-            "💬 Девушка печатает..."
-        )
-
-        time.sleep(0.7)
-
-        bot.edit_message_text(
-            "👀 Читает ваше сообщение...",
-            message.chat.id,
-            msg.message_id
-        )
-
-        time.sleep(0.7)
-
-        bot.edit_message_text(
-            "✨ Готовит ответ...",
-            message.chat.id,
-            msg.message_id
-        )
-
-        answer = ask_girl_ai(user, text)
-
-        try:
-            bot.edit_message_text(
-                f"👧 {answer}",
-                message.chat.id,
-                msg.message_id
-            )
-        except:
-            bot.send_message(message.chat.id, f"👧 {answer}")
-
         return
 
     if mode == "chat":
