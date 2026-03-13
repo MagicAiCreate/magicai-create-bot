@@ -8,11 +8,33 @@ import html
 import threading
 from datetime import datetime
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+BOT_TOKEN = "8234095622:AAHP2W672x86UF5A2lhgnVCCQLyGims9zIs"
+OPENAI_KEY = "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"
+REPLICATE_API_TOKEN = "r8_ANvTn1YesYcf3kyEbcCXHIRqzQUFf0t2X1wiE"
+CRYPTOBOT_TOKEN = "545090:AAqvykQnIO8vdmTnSZLSMN5JG2mFap6VNA8"
+KLING_ACCESS_KEY = "ATDgkBfTHnHMT3C8K3rpJKgdB998EgKK"
+KLING_SECRET_KEY = "mmfyTBaRJKYnPgeDgKH8P43LKRgHRffD"
 ADMIN_ID = 816154985
+
+CHAT_MODEL = "gpt-4.1"
+PROMPT_MODEL = "gpt-4.1"
+IMAGE_MODEL = "google/nano-banana-pro"
+
+CHAT_MAX_TOKENS = 400
+PROMPT_MAX_TOKENS = 300
+CHAT_TEMPERATURE = 0.5
+PROMPT_TEMPERATURE = 0.5
+
+CHAT_MEMORY_LIMIT = 10
+
+TEXT_COOLDOWN = 1.5
+IMAGE_COOLDOWN = 3
+VIDEO_COOLDOWN = 3
+
+IMAGE_PRICE = 25
+CHAT_PRICE = 1
+REFERRAL_BONUS = 15
+START_TOKENS = 50
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -30,6 +52,8 @@ pending_video_prompt = {}
 pending_video_photo = {}
 pending_video_ref = {}
 pending_video_size = {}
+
+user_cooldowns = {}
 
 # база данных
 db = sqlite3.connect("database.db", check_same_thread=False)
@@ -76,6 +100,27 @@ created_at TEXT DEFAULT CURRENT_TIMESTAMP
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS token_spending(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+user_id INTEGER,
+tokens INTEGER,
+reason TEXT,
+created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS task_statuses(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+user_id INTEGER,
+task_type TEXT,
+status TEXT,
+meta TEXT,
+created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
 try:
     cursor.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
 except:
@@ -94,6 +139,101 @@ db.commit()
 
 def apply_bonus(tokens_amount):
     return int(tokens_amount * 1.1)
+
+
+def safe_json(response):
+    try:
+        return response.json()
+    except:
+        return {}
+
+
+def update_task_status(user_id, task_type, status, meta=None):
+    try:
+        cursor.execute(
+            """
+            INSERT INTO task_statuses (user_id, task_type, status, meta)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, task_type, status, json.dumps(meta, ensure_ascii=False) if meta else None)
+        )
+        db.commit()
+    except:
+        pass
+
+
+def log_token_spending(user_id, tokens, reason):
+    try:
+        cursor.execute(
+            """
+            INSERT INTO token_spending (user_id, tokens, reason)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, tokens, reason)
+        )
+        db.commit()
+    except:
+        pass
+
+
+def get_user_tokens(user_id):
+    cursor.execute("SELECT tokens FROM users WHERE user_id=?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return row[0]
+
+
+def spend_tokens(user_id, amount, reason="spend"):
+    cursor.execute(
+        "SELECT tokens FROM users WHERE user_id=?",
+        (user_id,)
+    )
+
+    row = cursor.fetchone()
+    if not row:
+        return False, "❌ Профиль не найден."
+
+    tokens = row[0]
+
+    if tokens < amount:
+        return False, f"❌ Недостаточно токенов. Нужно {amount} 💎."
+
+    cursor.execute(
+        "UPDATE users SET tokens = tokens - ?, requests = requests + 1 WHERE user_id=?",
+        (amount, user_id)
+    )
+
+    db.commit()
+    log_token_spending(user_id, amount, reason)
+    return True, tokens - amount
+
+
+def add_tokens(user_id, amount):
+    cursor.execute(
+        "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
+        (amount, user_id)
+    )
+    db.commit()
+
+
+def can_process(user_id, action_type):
+    now = time.time()
+    key = f"{user_id}:{action_type}"
+
+    cooldown = TEXT_COOLDOWN
+    if action_type == "image":
+        cooldown = IMAGE_COOLDOWN
+    elif action_type == "video":
+        cooldown = VIDEO_COOLDOWN
+
+    last = user_cooldowns.get(key, 0)
+
+    if now - last < cooldown:
+        return False
+
+    user_cooldowns[key] = now
+    return True
 
 
 # регистрация пользователя
@@ -119,8 +259,8 @@ def register_user(user, ref=None):
             referrer = ref
 
             cursor.execute(
-                "UPDATE users SET tokens = tokens + 15 WHERE user_id=?",
-                (ref,)
+                "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
+                (REFERRAL_BONUS, ref)
             )
 
     cursor.execute(
@@ -128,7 +268,7 @@ def register_user(user, ref=None):
         INSERT INTO users (user_id, username, tokens, requests, referrer, created_at, last_seen)
         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (user.id, username, 50, 0, referrer)
+        (user.id, username, START_TOKENS, 0, referrer)
     )
 
     db.commit()
@@ -143,7 +283,7 @@ def get_memory(user_id):
     if data is None:
 
         history = [
-            {"role": "system", "content": "Ты дружелюбный умный AI помощник."}
+            {"role": "system", "content": "Ты дружелюбный умный AI помощник. Отвечай кратко, понятно и без лишней воды."}
         ]
 
         cursor.execute(
@@ -202,6 +342,9 @@ def ask_gpt(user_id, text):
         "content": text
     })
 
+    if len(history) > CHAT_MEMORY_LIMIT:
+        history = [history[0]] + history[-(CHAT_MEMORY_LIMIT - 1):]
+
     url = "https://api.openai.com/v1/chat/completions"
 
     headers = {
@@ -210,13 +353,17 @@ def ask_gpt(user_id, text):
     }
 
     data = {
-        "model": "gpt-4o-mini",
+        "model": CHAT_MODEL,
         "messages": history,
-        "temperature": 0.7
+        "temperature": CHAT_TEMPERATURE,
+        "max_tokens": CHAT_MAX_TOKENS
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=90)
-    result = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=90)
+        result = safe_json(r)
+    except:
+        return "❌ Ошибка ответа от AI."
 
     if "choices" not in result:
         return "❌ Ошибка ответа от AI."
@@ -228,17 +375,14 @@ def ask_gpt(user_id, text):
         "content": answer
     })
 
-    if len(history) > 20:
-        history = history[-20:]
+    if len(history) > CHAT_MEMORY_LIMIT:
+        history = [history[0]] + history[-(CHAT_MEMORY_LIMIT - 1):]
 
     save_memory(user_id, history)
 
-    cursor.execute(
-        "UPDATE users SET tokens = tokens - 1, requests = requests + 1 WHERE user_id=?",
-        (user_id,)
-    )
-
-    db.commit()
+    ok, result_msg = spend_tokens(user_id, CHAT_PRICE, "chat")
+    if not ok:
+        return result_msg
 
     return answer
 
@@ -268,16 +412,20 @@ def improve_prompt(prompt):
 Выводи только улучшенный промпт."""
 
     data = {
-        "model": "gpt-4o-mini",
+        "model": PROMPT_MODEL,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.7
+        "temperature": PROMPT_TEMPERATURE,
+        "max_tokens": PROMPT_MAX_TOKENS
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=60)
-    result = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=60)
+        result = safe_json(r)
+    except:
+        return prompt
 
     if "choices" not in result:
         return prompt
@@ -296,19 +444,19 @@ def generate_flux(prompt, aspect_ratio="9:16"):
     }
 
     data = {
-        "version": "fdf4cb96614227f3021c42f35bc92d4fd2e3e1ae9f50ca4004ffa8da64bf8dca",
+        "model": IMAGE_MODEL,
         "input": {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
-            "resolution": "2K",
-            "output_format": "jpg",
-            "safety_filter_level": "block_only_high",
-            "allow_fallback_model": True
+            "resolution": "2K"
         }
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=120)
-    prediction = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=120)
+        prediction = safe_json(r)
+    except:
+        return None
 
     if "id" not in prediction:
         return None
@@ -319,13 +467,16 @@ def generate_flux(prompt, aspect_ratio="9:16"):
 
         time.sleep(2)
 
-        r = requests.get(
-            f"https://api.replicate.com/v1/predictions/{prediction_id}",
-            headers=headers,
-            timeout=120
-        )
+        try:
+            r = requests.get(
+                f"https://api.replicate.com/v1/predictions/{prediction_id}",
+                headers=headers,
+                timeout=120
+            )
+            result = safe_json(r)
+        except:
+            return None
 
-        result = r.json()
         status = result.get("status")
 
         if status == "succeeded":
@@ -350,20 +501,20 @@ def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
     }
 
     data = {
-        "version": "fdf4cb96614227f3021c42f35bc92d4fd2e3e1ae9f50ca4004ffa8da64bf8dca",
+        "model": IMAGE_MODEL,
         "input": {
             "prompt": prompt,
             "image_input": [image_url],
             "aspect_ratio": aspect_ratio,
-            "resolution": "2K",
-            "output_format": "jpg",
-            "safety_filter_level": "block_only_high",
-            "allow_fallback_model": True
+            "resolution": "2K"
         }
     }
 
-    r = requests.post(url, headers=headers, json=data, timeout=120)
-    prediction = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=120)
+        prediction = safe_json(r)
+    except:
+        return None
 
     if "id" not in prediction:
         return None
@@ -374,13 +525,16 @@ def edit_image(image_url, prompt, aspect_ratio="match_input_image"):
 
         time.sleep(2)
 
-        r = requests.get(
-            f"https://api.replicate.com/v1/predictions/{prediction_id}",
-            headers=headers,
-            timeout=120
-        )
+        try:
+            r = requests.get(
+                f"https://api.replicate.com/v1/predictions/{prediction_id}",
+                headers=headers,
+                timeout=120
+            )
+            result = safe_json(r)
+        except:
+            return None
 
-        result = r.json()
         status = result.get("status")
 
         if status == "succeeded":
@@ -540,8 +694,11 @@ def create_crypto_invoice(user_id, asset, amount, tokens):
         "payload": f"{user_id}_{asset}_{tokens}"
     }
 
-    r = requests.post(url, headers=headers, json=payload, timeout=30)
-    data = r.json()
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        data = safe_json(r)
+    except:
+        return None
 
     if not data.get("ok"):
         return None
@@ -721,11 +878,6 @@ def admin_stats():
     cursor.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at)=DATE('now')")
     new_today = cursor.fetchone()[0] or 0
 
-    cursor.execute("SELECT COUNT(*) FROM users WHERE DATE(last_seen)=DATE('now')")
-    active_today = cursor.fetchone()[0] or 0
-
-    left_today = max(total_users - active_today, 0)
-
     cursor.execute("SELECT COALESCE(SUM(stars),0) FROM purchases WHERE DATE(created_at)=DATE('now')")
     stars_today = cursor.fetchone()[0] or 0
 
@@ -738,22 +890,27 @@ def admin_stats():
     cursor.execute("SELECT COALESCE(SUM(amount),0) FROM crypto_payments WHERE DATE(created_at)=DATE('now') AND status='paid'")
     crypto_amount_today = cursor.fetchone()[0] or 0
 
+    cursor.execute("SELECT COALESCE(SUM(tokens),0) FROM token_spending WHERE DATE(created_at)=DATE('now')")
+    spent_today = cursor.fetchone()[0] or 0
+
     return f"""
 📊 Статистика бота
+
+👤 Профиль админа: {ADMIN_ID}
 
 👥 Пользователей всего: {total_users}
 
 🆕 Новых за сегодня: {new_today}
 
-🚪 Ушло сегодня: {left_today}
-
-⭐ Заработано сегодня: {stars_today}
-
-💎 Куплено токенов сегодня: {tokens_today}
+⭐ Пополнили Stars сегодня: {stars_today}
 
 💰 Крипто оплат сегодня: {crypto_paid_today}
 
 💵 Крипто сумма сегодня: {crypto_amount_today}
+
+💎 Куплено токенов сегодня: {tokens_today}
+
+📉 Потрачено токенов сегодня: {spent_today}
 """
 
 
@@ -845,12 +1002,7 @@ def leopold_addme(message):
 
         amount = int(message.text.split()[1])
 
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
-            (amount, ADMIN_ID)
-        )
-
-        db.commit()
+        add_tokens(ADMIN_ID, amount)
 
         bot.send_message(
             message.chat.id,
@@ -888,12 +1040,7 @@ def leopold_give(message):
             bot.send_message(message.chat.id, "❌ Пользователь не найден.")
             return
 
-        cursor.execute(
-            "UPDATE users SET tokens = tokens + ? WHERE user_id=?",
-            (amount, user_id)
-        )
-
-        db.commit()
+        add_tokens(user_id, amount)
 
         bot.send_message(
             message.chat.id,
@@ -919,9 +1066,11 @@ def check_crypto_payments():
         "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN
     }
 
-    r = requests.get(url, headers=headers, timeout=30)
-
-    data = r.json()
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+        data = safe_json(r)
+    except:
+        return
 
     if not data.get("ok"):
         return
@@ -1092,6 +1241,8 @@ def callback(call):
             )
             return
 
+        update_task_status(user, "video_motion", "pending", {"size": size, "duration": duration})
+
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "Ваш запрос принят.\n\n" + video_waiting_text())
 
@@ -1121,6 +1272,8 @@ def callback(call):
             )
             return
 
+        update_task_status(user, "video_text", "pending", {"duration": duration})
+
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "Ваш запрос принят.\n\n" + video_waiting_text())
 
@@ -1149,6 +1302,8 @@ def callback(call):
                 reply_markup=buy_tokens_keyboard()
             )
             return
+
+        update_task_status(user, "video_photo", "pending", {"duration": duration})
 
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "Ваш запрос принят.\n\n" + video_waiting_text())
@@ -1397,10 +1552,10 @@ def callback(call):
 
         tokens = row[0]
 
-        if tokens < 25:
+        if tokens < IMAGE_PRICE:
             bot.answer_callback_query(
                 call.id,
-                "❌ Недостаточно токенов. Нужно 25."
+                f"❌ Недостаточно токенов. Нужно {IMAGE_PRICE}."
             )
             return
 
@@ -1410,6 +1565,8 @@ def callback(call):
         bot.answer_callback_query(call.id)
 
         if task["type"] == "edit":
+
+            update_task_status(user, "image_edit", "processing", {"aspect_ratio": aspect_ratio})
 
             status_msg = generation_status(
                 call.message.chat.id,
@@ -1428,21 +1585,25 @@ def callback(call):
             )
 
             if result:
-                cursor.execute(
-                    "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                    (user,)
-                )
-                db.commit()
+                ok, spend_result = spend_tokens(user, IMAGE_PRICE, "image_edit")
+                if not ok:
+                    bot.edit_message_text(
+                        spend_result,
+                        call.message.chat.id,
+                        status_msg.message_id
+                    )
+                    return
 
-                remaining = tokens - 25
+                remaining = spend_result
                 last_generated[user] = result
+                update_task_status(user, "image_edit", "done", {"result": result})
 
                 try:
                     bot.delete_message(call.message.chat.id, status_msg.message_id)
                 except:
                     pass
 
-                caption = build_result_caption(task["prompt"], result, 25, remaining)
+                caption = build_result_caption(task["prompt"], result, IMAGE_PRICE, remaining)
 
                 bot.send_photo(
                     call.message.chat.id,
@@ -1452,6 +1613,7 @@ def callback(call):
                     reply_markup=result_keyboard(user)
                 )
             else:
+                update_task_status(user, "image_edit", "failed")
                 bot.edit_message_text(
                     "❌ Ошибка при обработке изображения.",
                     call.message.chat.id,
@@ -1468,6 +1630,7 @@ def callback(call):
             return
 
         generation_lock[user] = True
+        update_task_status(user, "image_generate", "processing", {"aspect_ratio": aspect_ratio})
 
         status_msg = generation_status(
             call.message.chat.id,
@@ -1484,22 +1647,27 @@ def callback(call):
 
         if result:
 
-            cursor.execute(
-                "UPDATE users SET tokens = tokens - 25, requests = requests + 1 WHERE user_id=?",
-                (user,)
-            )
+            ok, spend_result = spend_tokens(user, IMAGE_PRICE, "image_generate")
+            if not ok:
+                bot.edit_message_text(
+                    spend_result,
+                    call.message.chat.id,
+                    status_msg.message_id
+                )
+                generation_lock[user] = False
+                return
 
-            db.commit()
+            remaining = spend_result
 
-            remaining = tokens - 25
             last_generated[user] = result
+            update_task_status(user, "image_generate", "done", {"result": result})
 
             try:
                 bot.delete_message(call.message.chat.id, status_msg.message_id)
             except:
                 pass
 
-            caption = build_result_caption(task["prompt"], result, 25, remaining)
+            caption = build_result_caption(task["prompt"], result, IMAGE_PRICE, remaining)
 
             bot.send_photo(
                 call.message.chat.id,
@@ -1511,6 +1679,7 @@ def callback(call):
 
         else:
 
+            update_task_status(user, "image_generate", "failed")
             bot.edit_message_text(
                 "❌ Ошибка генерации изображения.",
                 call.message.chat.id,
@@ -1722,11 +1891,16 @@ https://t.me/AiMagicCreateBot?start={user}
 Отправь ссылку друзьям и получай бонусы за каждую регистрацию.
 """
 
-        send(
+        clean(message.chat.id)
+
+        msg = bot.send_message(
             message.chat.id,
             text_profile,
-            back()
+            reply_markup=back(),
+            disable_web_page_preview=True
         )
+
+        last_messages[message.chat.id] = msg.message_id
         return
 
     if text == "🥷 Убийца фотошопа":
@@ -1813,6 +1987,13 @@ https://t.me/AiMagicCreateBot?start={user}
 
     if mode == "chat":
 
+        if not can_process(user, "chat"):
+            bot.send_message(
+                message.chat.id,
+                "⏳ Подождите пару секунд перед следующим сообщением."
+            )
+            return
+
         msg = bot.send_message(
             message.chat.id,
             "💎 Запрос получен..."
@@ -1846,6 +2027,13 @@ https://t.me/AiMagicCreateBot?start={user}
 
     if mode == "video":
 
+        if not can_process(user, "video"):
+            bot.send_message(
+                message.chat.id,
+                "⏳ Подождите пару секунд перед следующим видео-запросом."
+            )
+            return
+
         video_mode = pending_video_mode.get(user)
 
         if video_mode == "text":
@@ -1868,6 +2056,13 @@ https://t.me/AiMagicCreateBot?start={user}
 
     if mode == "image":
 
+        if not can_process(user, "image"):
+            bot.send_message(
+                message.chat.id,
+                "⏳ Подождите пару секунд перед следующей генерацией."
+            )
+            return
+
         cursor.execute(
             "SELECT tokens FROM users WHERE user_id=?",
             (user,)
@@ -1881,10 +2076,10 @@ https://t.me/AiMagicCreateBot?start={user}
 
         tokens = row[0]
 
-        if tokens < 25:
+        if tokens < IMAGE_PRICE:
             bot.send_message(
                 message.chat.id,
-                "❌ Недостаточно токенов. Нужно 25 💎."
+                f"❌ Недостаточно токенов. Нужно {IMAGE_PRICE} 💎."
             )
             return
 
@@ -1944,4 +2139,9 @@ def crypto_loop():
 
 threading.Thread(target=crypto_loop, daemon=True).start()
 
-bot.infinity_polling()
+while True:
+    try:
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    except Exception as e:
+        print("Bot crashed:", e)
+        time.sleep(5)
