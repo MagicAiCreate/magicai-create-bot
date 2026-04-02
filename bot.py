@@ -1,129 +1,129 @@
+cp /root/bot.py /root/bot_before_text_fix_all_sizes.py
+
 python3 - <<'PY'
 from pathlib import Path
+import re
 
 p = Path('/root/bot.py')
 text = p.read_text(encoding='utf-8')
 
-# ===== 1. СУПЕР УСИЛЕНИЕ ПРОМТА (как у топ-ботов) =====
-if "def enhance_video_prompt_v2(" not in text:
-    insert = '''
-def enhance_video_prompt_v2(prompt):
-    base = prompt.strip()
+# 1. Чиним блок выбора длительности для text video
+pattern1 = r'''if call\.data\.startswith\("video_text_dur_"\):.*?return'''
+replacement1 = '''if call.data.startswith("video_text_dur_"):
+        parts = call.data.split("_")
+        duration = int(parts[3])
+        spent = int(parts[4])
 
-    cinematic = (
-        "cinematic film scene, ultra realistic, 8k, movie quality, "
-        "professional lighting, dynamic lighting, volumetric light, shadows, "
-        "depth of field, realistic textures, skin details, pores, natural motion, "
-        "cinematic composition, film grain, lens blur, bokeh, realistic reflections"
-    )
+        cursor.execute("SELECT tokens FROM users WHERE user_id=?", (user,))
+        row = cursor.fetchone()
 
-    environment = (
-        "detailed environment, atmosphere, ambient light, realistic physics, "
-        "depth layering, foreground middle background separation"
-    )
+        if not row:
+            bot.answer_callback_query(call.id, "❌ Профиль не найден.")
+            return
 
-    motion = (
-        "smooth cinematic camera movement, steady tracking shot, "
-        "subtle handheld motion, natural physics movement"
-    )
+        have = row[0]
 
-    directing = (
-        "realistic human behavior, natural gestures, believable movement, "
-        "no stiff motion, no AI artifacts"
-    )
+        if have < spent:
+            bot.answer_callback_query(call.id)
+            bot.send_message(
+                call.message.chat.id,
+                insufficient_tokens_text(spent, have),
+                reply_markup=buy_tokens_keyboard()
+            )
+            return
 
-    negative = (
-        "low quality, blurry, cartoon, cheap, distorted, bad anatomy, "
-        "oversaturated, unrealistic, low detail, artifacts, noise, jpeg artifacts"
-    )
+        active_video = get_user_active_video_tasks(user)
 
-    return f"{base}, {cinematic}, {environment}, {motion}, {directing} --neg {negative}"
-'''
-    text = text.replace("def submit_kling_task", insert + "\n\ndef submit_kling_task", 1)
+        if active_video >= 1:
+            bot.answer_callback_query(call.id)
+            bot.send_message(
+                call.message.chat.id,
+                "⏳ У вас уже есть 1 активная видео-задача. Дождитесь завершения."
+            )
+            return
 
-# ===== 2. УМНАЯ КАМЕРА (как у топ-ботов) =====
-if "def choose_camera_v2(" not in text:
-    insert = '''
-def choose_camera_v2(prompt):
-    p = prompt.lower()
+        prompt = pending_video_prompt.get(user, "")
+        size = pending_video_size.get(user, "9:16")
 
-    if any(w in p for w in ["бежит","погоня","бег"]):
-        return {"type": "forward"}
+        if duration not in [3, 5, 7, 10, 15]:
+            duration = 5
 
-    if any(w in p for w in ["толпа","улица","город","люди"]):
-        return {"type": "forward_up"}
+        if size not in ["1:1", "9:16", "16:9"]:
+            size = "9:16"
 
-    if any(w in p for w in ["разговор","диалог","сидит"]):
-        return {"type": "down_back"}
+        enqueue_video_task(
+            user_id=user,
+            prompt=prompt,
+            size=size,
+            duration=duration,
+            mode="text",
+            photo_file_id="",
+            ref_file_id=""
+        )
 
-    if any(w in p for w in ["эпично","дрон","панорама"]):
-        return {"type": "forward_up"}
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            f"🎥 Видео поставлено в очередь\\n\\nРазмер: {size}\\nДлительность: {duration} сек"
+        )
+        return'''
 
-    return {"type": "forward_up"}
-'''
-    text = text.replace("def submit_kling_task", insert + "\n\ndef submit_kling_task", 1)
+new_text, n1 = re.subn(pattern1, replacement1, text, count=1, flags=re.S)
+if n1 != 1:
+    raise SystemExit("TEXT_DURATION_BLOCK_NOT_FOUND")
 
-# ===== 3. РАЗБИЕНИЕ НА СЦЕНЫ (самая важная фишка топ-ботов) =====
-if "def build_multi_prompt(" not in text:
-    insert = '''
-def build_multi_prompt(prompt, duration):
-    d = int(duration)
+text = new_text
 
-    if d <= 5:
-        return [{"index":1,"prompt":enhance_video_prompt_v2(prompt),"duration":str(d)}]
+# 2. Чиним submit_kling_task, чтобы он реально брал duration и size из task
+pattern2 = r'''def submit_kling_task\(task\):.*?try:\n        r = requests\.post\('''
+m = re.search(pattern2, text, flags=re.S)
+if not m:
+    raise SystemExit("SUBMIT_KLING_TASK_HEADER_NOT_FOUND")
 
-    parts = []
+start = m.start()
+mid = m.end()
 
-    parts.append({
-        "index":1,
-        "prompt":enhance_video_prompt_v2(prompt + ", establishing shot, wide angle"),
-        "duration":"3"
-    })
+header_replacement = '''def submit_kling_task(task):
+    mode = task.get("mode", "text")
+    prompt = task.get("prompt", "")
+    size = str(task.get("size", "9:16"))
+    duration = int(task.get("duration", 5) or 5)
+    photo_file_id = task.get("photo_file_id", "")
+    ref_file_id = task.get("ref_file_id", "")
+    task_id_local = task.get("task_id", "")
 
-    parts.append({
-        "index":2,
-        "prompt":enhance_video_prompt_v2(prompt + ", closer shot, more detail"),
-        "duration":str(d-3)
-    })
+    if mode != "text":
+        return {
+            "ok": False,
+            "reason": f"KLING_NOT_ENABLED_FOR_MODE_{mode}"
+        }
 
-    return parts
-'''
-    text = text.replace("def submit_kling_task", insert + "\n\ndef submit_kling_task", 1)
+    if duration not in [3, 5, 7, 10, 15]:
+        duration = 5
 
-# ===== 4. ПОЛНЫЙ ПАТЧ PAYLOAD =====
-old = '''    payload = {
-        "model_name": "kling-v2-6",
-        "prompt": prompt,
-        "duration": str(duration),
-        "mode": "std",
-        "sound": "off",
-        "aspect_ratio": str(size),
-        "external_task_id": str(task_id_local)
-    }'''
-
-new = '''    camera = choose_camera_v2(prompt)
-    multi_prompt = build_multi_prompt(prompt, duration)
+    if size not in ["1:1", "9:16", "16:9"]:
+        size = "9:16"
 
     payload = {
         "model_name": "kling-v2-6",
-        "multi_prompt": multi_prompt,
-        "multi_shot": True,
-        "shot_type": "customize",
+        "prompt": enhance_video_prompt_safe(prompt) if "enhance_video_prompt_safe" in globals() else prompt,
         "duration": str(duration),
         "mode": "pro",
         "sound": "off",
-        "aspect_ratio": str(size),
-        "camera_control": camera,
-        "cfg_scale": 0.7,
+        "aspect_ratio": size,
         "external_task_id": str(task_id_local)
-    }'''
+    }
 
-if old not in text:
-    print("PAYLOAD_NOT_FOUND")
-    raise SystemExit
+    print("KLING TEXT INPUT:", {"duration": duration, "size": size, "mode": mode})
 
-text = text.replace(old, new, 1)
+    try:
+        r = requests.post('''
+
+text = text[:start] + header_replacement + text[mid:]
 
 p.write_text(text, encoding='utf-8')
-print("ULTRA_PATCH_OK")
+print("TEXT_FIXED_ALL_SIZES")
 PY
+
+sudo systemctl restart magicai-bot
+sudo systemctl status magicai-bot
