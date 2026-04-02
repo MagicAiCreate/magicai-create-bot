@@ -1,4 +1,4 @@
-cp /root/bot.py /root/bot_before_text_fix_all_sizes.py
+cp /root/bot.py /root/bot_before_realism_final.py
 
 python3 - <<'PY'
 from pathlib import Path
@@ -7,122 +7,114 @@ import re
 p = Path('/root/bot.py')
 text = p.read_text(encoding='utf-8')
 
-# 1. Чиним блок выбора длительности для text video
-pattern1 = r'''if call\.data\.startswith\("video_text_dur_"\):.*?return'''
-replacement1 = '''if call.data.startswith("video_text_dur_"):
-        parts = call.data.split("_")
-        duration = int(parts[3])
-        spent = int(parts[4])
+# 1. Универсальная очистка prompt для показа пользователю
+cleanup_func = '''
+def display_user_prompt_only(prompt):
+    p = str(prompt or "")
+    markers = [
+        ", cinematic film scene",
+        ", cinematic scene",
+        ", cinematic, ultra realistic",
+        ", ultra realistic",
+        ", high detail",
+        ", premium quality",
+        ", professional cinematography",
+        ", film lighting",
+        ", volumetric light",
+        ", soft shadows",
+        ", depth of field",
+        ", realistic textures",
+        ", natural motion",
+        ", smooth movement",
+        ", sharp focus",
+        ", detailed environment",
+        ", realistic human behavior",
+        ", cinematic camera",
+        ", subtle camera movement",
+        ", stable framing",
+        ", natural composition",
+        ", realistic proportions",
+        ", realistic skin texture",
+        ", believable physics",
+        ", natural facial details",
+        ", realistic clothing folds",
+        ", realistic photo",
+        ", ordinary natural appearance",
+        ", natural face",
+        ", everyday clothing",
+        ", realistic hands",
+        ", natural lighting",
+        ", balanced detail",
+        ", candid look",
+        ", authentic scene",
+        ", no glamour",
+        ", no beauty idealization",
+        ", true-to-life imperfections",
+        " --neg ",
+        "--neg "
+    ]
+    cut = len(p)
+    for m in markers:
+        i = p.find(m)
+        if i != -1:
+            cut = min(cut, i)
+    return p[:cut].strip()
 
-        cursor.execute("SELECT tokens FROM users WHERE user_id=?", (user,))
-        row = cursor.fetchone()
 
-        if not row:
-            bot.answer_callback_query(call.id, "❌ Профиль не найден.")
-            return
+'''
 
-        have = row[0]
+if 'def display_user_prompt_only(prompt):' in text:
+    text = re.sub(
+        r"def display_user_prompt_only\(prompt\):.*?return p\[:cut\]\.strip\(\)\n\n",
+        cleanup_func,
+        text,
+        flags=re.S
+    )
+else:
+    pos = text.find('def build_video_result_caption')
+    if pos == -1:
+        pos = text.find('def build_result_caption')
+    if pos == -1:
+        pos = 0
+    text = text[:pos] + cleanup_func + text[pos:]
 
-        if have < spent:
-            bot.answer_callback_query(call.id)
-            bot.send_message(
-                call.message.chat.id,
-                insufficient_tokens_text(spent, have),
-                reply_markup=buy_tokens_keyboard()
-            )
-            return
+# 2. Внутри caption-функций всегда чистим prompt перед показом
+def ensure_cleanup_in_func(src, func_name):
+    pat = rf"(def {func_name}\(prompt,[^\n]*\):\n)"
+    m = re.search(pat, src)
+    if not m:
+        return src
+    start = m.end()
+    if src[start:start+40].find("prompt = display_user_prompt_only(prompt)") != -1:
+        return src
+    return src[:start] + "    prompt = display_user_prompt_only(prompt)\n" + src[start:]
 
-        active_video = get_user_active_video_tasks(user)
+for fn in ["build_video_result_caption", "build_result_caption", "build_image_result_caption"]:
+    text = ensure_cleanup_in_func(text, fn)
 
-        if active_video >= 1:
-            bot.answer_callback_query(call.id)
-            bot.send_message(
-                call.message.chat.id,
-                "⏳ У вас уже есть 1 активная видео-задача. Дождитесь завершения."
-            )
-            return
+# 3. Меняем скрытый промт на максимально реалистичный
+old_positive = "cinematic film scene, ultra realistic, high detail, premium quality, professional cinematography, film lighting, volumetric light, soft shadows, depth of field, realistic textures, natural motion, smooth movement, sharp focus, detailed environment, realistic human behavior, cinematic camera, subtle camera movement, stable framing, natural composition, realistic proportions, realistic skin texture, believable physics, natural facial details, realistic clothing folds"
+new_positive = "realistic photo, ordinary natural appearance, natural face, realistic skin texture, normal proportions, everyday clothing, realistic hands, natural lighting, balanced detail, candid look, authentic scene, no glamour, no beauty idealization, true-to-life imperfections"
 
-        prompt = pending_video_prompt.get(user, "")
-        size = pending_video_size.get(user, "9:16")
+old_negative = "low quality, blurry, cartoon, anime, cheap look, distorted anatomy, oversaturated colors, unrealistic motion, artifacts, noisy image, bad hands"
+new_negative = "cartoon, anime, plastic skin, glamour look, beauty filter, doll face, distorted anatomy, bad hands, extra fingers, oversaturated colors, fake lighting, artifacts, noisy image"
 
-        if duration not in [3, 5, 7, 10, 15]:
-            duration = 5
+text = text.replace(old_positive, new_positive)
+text = text.replace(old_negative, new_negative)
 
-        if size not in ["1:1", "9:16", "16:9"]:
-            size = "9:16"
+# 4. Запасные замены для более коротких версий
+text = text.replace(
+    "cinematic, ultra realistic, high detail, film lighting, volumetric light, depth of field, realistic textures, natural motion, professional cinematography, sharp focus",
+    "realistic photo, ordinary natural appearance, natural face, realistic skin texture, normal proportions, everyday clothing, realistic hands, natural lighting, balanced detail, candid look, authentic scene, no glamour, no beauty idealization, true-to-life imperfections"
+)
 
-        enqueue_video_task(
-            user_id=user,
-            prompt=prompt,
-            size=size,
-            duration=duration,
-            mode="text",
-            photo_file_id="",
-            ref_file_id=""
-        )
-
-        bot.answer_callback_query(call.id)
-        bot.send_message(
-            call.message.chat.id,
-            f"🎥 Видео поставлено в очередь\\n\\nРазмер: {size}\\nДлительность: {duration} сек"
-        )
-        return'''
-
-new_text, n1 = re.subn(pattern1, replacement1, text, count=1, flags=re.S)
-if n1 != 1:
-    raise SystemExit("TEXT_DURATION_BLOCK_NOT_FOUND")
-
-text = new_text
-
-# 2. Чиним submit_kling_task, чтобы он реально брал duration и size из task
-pattern2 = r'''def submit_kling_task\(task\):.*?try:\n        r = requests\.post\('''
-m = re.search(pattern2, text, flags=re.S)
-if not m:
-    raise SystemExit("SUBMIT_KLING_TASK_HEADER_NOT_FOUND")
-
-start = m.start()
-mid = m.end()
-
-header_replacement = '''def submit_kling_task(task):
-    mode = task.get("mode", "text")
-    prompt = task.get("prompt", "")
-    size = str(task.get("size", "9:16"))
-    duration = int(task.get("duration", 5) or 5)
-    photo_file_id = task.get("photo_file_id", "")
-    ref_file_id = task.get("ref_file_id", "")
-    task_id_local = task.get("task_id", "")
-
-    if mode != "text":
-        return {
-            "ok": False,
-            "reason": f"KLING_NOT_ENABLED_FOR_MODE_{mode}"
-        }
-
-    if duration not in [3, 5, 7, 10, 15]:
-        duration = 5
-
-    if size not in ["1:1", "9:16", "16:9"]:
-        size = "9:16"
-
-    payload = {
-        "model_name": "kling-v2-6",
-        "prompt": enhance_video_prompt_safe(prompt) if "enhance_video_prompt_safe" in globals() else prompt,
-        "duration": str(duration),
-        "mode": "pro",
-        "sound": "off",
-        "aspect_ratio": size,
-        "external_task_id": str(task_id_local)
-    }
-
-    print("KLING TEXT INPUT:", {"duration": duration, "size": size, "mode": mode})
-
-    try:
-        r = requests.post('''
-
-text = text[:start] + header_replacement + text[mid:]
+text = text.replace(
+    "low quality, blurry, cartoon, anime, cheap, distorted, bad anatomy, oversaturated, unrealistic, artifacts",
+    "cartoon, anime, plastic skin, glamour look, beauty filter, doll face, distorted anatomy, bad hands, extra fingers, oversaturated colors, fake lighting, artifacts"
+)
 
 p.write_text(text, encoding='utf-8')
-print("TEXT_FIXED_ALL_SIZES")
+print("REALISM_AND_HIDE_FIXED")
 PY
 
 sudo systemctl restart magicai-bot
